@@ -484,12 +484,12 @@ _STRINGS: dict[str, dict[str, str]] = {
         "de": (
             "Wähle die Rollen und Nutzer, die teilnehmen dürfen, dann **Speichern**. "
             "Leere Auswahl = Event offen für alle. Aktuelle Auswahl ist vorausgewählt. "
-            "(Event #{db_id})"
+            "({event_label})"
         ),
         "en": (
             "Pick the roles and users allowed to participate, then **Save**. "
             "Leaving the selection empty makes the event open to everyone. "
-            "The current allow-list is pre-selected. (Event #{db_id})"
+            "The current allow-list is pre-selected. ({event_label})"
         ),
     },
     "roles.picker_placeholder": {

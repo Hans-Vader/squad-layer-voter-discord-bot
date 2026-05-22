@@ -2841,12 +2841,12 @@ def _format_gate_display(event: dict, guild_id: int, lang: str) -> str:
     return ", ".join(parts)
 
 
-def _build_edit_main_embed(event: dict, guild_id: int, lang: str,
+def _build_edit_main_embed(event: dict, db_id: int, guild_id: int, lang: str,
                            updated_label: Optional[str] = None) -> discord.Embed:
     """Property overview embed shown at the top of every DM dialog state."""
     embed = discord.Embed(
-        title=t("edit.title", lang),
-        description=t("edit.select_property", lang),
+        title=display_name(event, db_id, lang=lang),
+        description=f"{t('edit.title', lang)}\n{t('edit.select_property', lang)}",
         color=discord.Color.blurple(),
     )
     for prop in _EDIT_PROPERTIES:
@@ -2901,7 +2901,8 @@ async def admin_set_event_roles(interaction: discord.Interaction, db_id: int):
     view = EventGateEditView(db_id, role_ids, user_ids, lang)
     embed = discord.Embed(
         title=t("roles.picker_title", lang),
-        description=t("roles.picker_desc", lang, db_id=db_id),
+        description=t("roles.picker_desc", lang,
+                      event_label=display_name(event, db_id, lang=lang)),
         color=discord.Color.blurple(),
     )
     await interaction.response.edit_message(embed=embed, view=view)
@@ -2956,7 +2957,7 @@ async def admin_edit_event(interaction: discord.Interaction, db_id: int):
     }
     _active_edit_sessions[user.id] = session
 
-    embed = _build_edit_main_embed(record["event"], interaction.guild_id, lang)
+    embed = _build_edit_main_embed(record["event"], db_id, interaction.guild_id, lang)
     view = EditMainView(user.id, db_id, interaction.guild_id, lang)
     try:
         dm_msg = await dm.send(embed=embed, view=view)
@@ -3083,7 +3084,7 @@ async def _refresh_main_view(interaction: discord.Interaction, user_id: int,
             )
         return
 
-    embed = _build_edit_main_embed(record["event"], guild_id, lang, updated_label=updated_label)
+    embed = _build_edit_main_embed(record["event"], db_id, guild_id, lang, updated_label=updated_label)
     view = EditMainView(user_id, db_id, guild_id, lang)
     _set_active_view(user_id, view)
 
