@@ -2045,7 +2045,7 @@ async def _resolve_poll_target(channel: discord.abc.Messageable, event: dict) ->
 
 
 async def _create_voting_thread(channel: discord.TextChannel, event: dict,
-                                 db_id, lang: str) -> Optional[discord.Thread]:
+                                 db_id: int, lang: str) -> Optional[discord.Thread]:
     """Create the private voting thread and pre-populate its members.
 
     Returns None when the event has no allow-list (caller falls back to

@@ -38,7 +38,7 @@ def normalize_event_name(raw: Optional[str]) -> Optional[str]:
     return cleaned or None
 
 
-def display_name(event: dict, db_id, *, lang: str = "en") -> str:
+def display_name(event: dict, db_id: int, *, lang: str = "en") -> str:
     """Render the event's display name with fallback to `Event #{db_id}`.
 
     `db_id` is the SQLite row id (lives on the wrapper record, not inside
@@ -418,7 +418,7 @@ def _embed_total_chars(embed: Embed) -> int:
     return total
 
 
-def build_event_embed(event: dict, settings: dict, db_id,
+def build_event_embed(event: dict, settings: dict, db_id: int,
                       vote_counts: Optional[dict] = None) -> Embed:
     """Build the main event embed displayed in the channel.
 
