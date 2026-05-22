@@ -1054,7 +1054,7 @@ async def _suggest_show_map_step(interaction: discord.Interaction, state: Sugges
 
 class SourceSelectView(ui.View):
     def __init__(self, options: list[discord.SelectOption], lang: str):
-        super().__init__(timeout=120)
+        super().__init__(timeout=600)
         self.add_item(SourceSelect(options, lang))
 
 
@@ -1079,7 +1079,7 @@ class SourceSelect(ui.Select):
 class MapSelectView(ui.View):
     def __init__(self, options: list[discord.SelectOption], lang: str,
                  placeholder: Optional[str] = None):
-        super().__init__(timeout=120)
+        super().__init__(timeout=600)
         self.lang = lang
         select = MapSelect(options, lang, placeholder=placeholder)
         self.add_item(select)
@@ -1095,7 +1095,7 @@ class GroupedMapSelectView(ui.View):
     """
 
     def __init__(self, groups: "dict[str, list[str]]", lang: str):
-        super().__init__(timeout=120)
+        super().__init__(timeout=600)
         self.lang = lang
         for bucket_key, group_maps in groups.items():
             if not group_maps:
@@ -1163,7 +1163,7 @@ class MapSelect(ui.Select):
 
 class ModeSelectView(ui.View):
     def __init__(self, options: list[discord.SelectOption], lang: str):
-        super().__init__(timeout=120)
+        super().__init__(timeout=600)
         self.add_item(ModeSelect(options, lang))
 
 
@@ -1227,7 +1227,7 @@ class ModeSelect(ui.Select):
 
 class Team1FactionSelectView(ui.View):
     def __init__(self, options: list[discord.SelectOption], lang: str):
-        super().__init__(timeout=120)
+        super().__init__(timeout=600)
         self.add_item(Team1FactionSelect(options, lang))
 
 
@@ -1281,7 +1281,7 @@ class Team1FactionSelect(ui.Select):
 
 class Team1UnitSelectView(ui.View):
     def __init__(self, options: list[discord.SelectOption], lang: str):
-        super().__init__(timeout=120)
+        super().__init__(timeout=600)
         self.add_item(Team1UnitSelect(options, lang))
 
 
@@ -1340,7 +1340,7 @@ async def _show_team2_faction_select(interaction: discord.Interaction,
 
 class Team2FactionSelectView(ui.View):
     def __init__(self, options: list[discord.SelectOption], lang: str):
-        super().__init__(timeout=120)
+        super().__init__(timeout=600)
         self.add_item(Team2FactionSelect(options, lang))
 
 
@@ -1394,7 +1394,7 @@ class Team2FactionSelect(ui.Select):
 
 class Team2UnitSelectView(ui.View):
     def __init__(self, options: list[discord.SelectOption], lang: str):
-        super().__init__(timeout=120)
+        super().__init__(timeout=600)
         self.add_item(Team2UnitSelect(options, lang))
 
 
@@ -1436,7 +1436,7 @@ async def _show_confirm(interaction: discord.Interaction, state: SuggestState, s
 
 class ConfirmSuggestionView(ui.View):
     def __init__(self, lang: str):
-        super().__init__(timeout=60)
+        super().__init__(timeout=600)
         self.lang = lang
 
     @ui.button(label="Submit", style=discord.ButtonStyle.success, emoji="✅")
