@@ -32,6 +32,7 @@ from utils import (
     set_log_channel, send_to_log_channel,
     normalize_event_name,
     EVENT_NAME_MAX_LENGTH,
+    display_name,
 )
 
 logger = logging.getLogger("layer_vote")
@@ -2043,27 +2044,8 @@ async def _resolve_poll_target(channel: discord.abc.Messageable, event: dict) ->
     return thread or channel
 
 
-_MONTH_NAMES_BY_LANG: dict[str, list[str]] = {
-    "en": ["", "January", "February", "March", "April", "May", "June",
-           "July", "August", "September", "October", "November", "December"],
-    "de": ["", "Januar", "Februar", "März", "April", "Mai", "Juni",
-           "Juli", "August", "September", "Oktober", "November", "Dezember"],
-}
-
-
-def _current_month_year_label(lang: str) -> str:
-    """Localized "<MonthName> <Year>" for the current date.
-
-    Used in voting-thread names. Avoids strftime("%B") because that
-    depends on the host system's LC_TIME, which we don't control.
-    """
-    now = datetime.now()
-    months = _MONTH_NAMES_BY_LANG.get(lang) or _MONTH_NAMES_BY_LANG["en"]
-    return f"{months[now.month]} {now.year}"
-
-
 async def _create_voting_thread(channel: discord.TextChannel, event: dict,
-                                 lang: str) -> Optional[discord.Thread]:
+                                 db_id, lang: str) -> Optional[discord.Thread]:
     """Create the private voting thread and pre-populate its members.
 
     Returns None when the event has no allow-list (caller falls back to
@@ -2078,7 +2060,8 @@ async def _create_voting_thread(channel: discord.TextChannel, event: dict,
 
     try:
         thread = await channel.create_thread(
-            name=t("thread.voting_name", lang, period=_current_month_year_label(lang)),
+            name=t("thread.voting_name", lang,
+                   event_label=display_name(event, db_id, lang=lang)),
             type=discord.ChannelType.private_thread,
             invitable=False,  # only the bot/mods can add others
             auto_archive_duration=10080,  # 7 days
@@ -2192,7 +2175,7 @@ async def _start_poll(interaction: discord.Interaction, db_id: int,
 
     # Gated events post the poll inside a private thread so Discord enforces
     # the allow-list. Open events keep the legacy in-channel behavior.
-    voting_thread = await _create_voting_thread(interaction.channel, event, lang)
+    voting_thread = await _create_voting_thread(interaction.channel, event, db_id, lang)
     target = voting_thread if voting_thread is not None else interaction.channel
     poll_message = await target.send(poll=poll)
 
@@ -2268,7 +2251,7 @@ async def _auto_start_poll(db_id: int, selected_ids: list[str]) -> bool:
     for s in selected[:10]:
         poll.add_answer(text=format_layer_poll_option(s))
 
-    voting_thread = await _create_voting_thread(channel, event, lang)
+    voting_thread = await _create_voting_thread(channel, event, db_id, lang)
     target = voting_thread if voting_thread is not None else channel
 
     try:
