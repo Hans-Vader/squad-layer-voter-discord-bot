@@ -1561,9 +1561,11 @@ async def handle_suggest_submit(interaction: discord.Interaction, lang: str):
     # Update the main event embed
     await _update_event_embed(state.db_id)
 
-    await send_to_log_channel(
+    await send_event_log(
+        event, state.db_id,
         f"New suggestion by {interaction.user.display_name}: {format_layer_short(suggestion)}",
         guild_id=state.guild_id,
+        lang=lang,
     )
 
 
@@ -1786,7 +1788,7 @@ async def admin_open_suggestions(interaction: discord.Interaction, db_id: int,
         ephemeral=True,
     )
     await _update_event_embed(db_id)
-    await send_to_log_channel(ack_text, guild_id=interaction.guild_id)
+    await send_event_log(event, db_id, ack_text, guild_id=interaction.guild_id, lang=lang)
 
 
 async def admin_close_suggestions(interaction: discord.Interaction, db_id: int):
@@ -1842,7 +1844,12 @@ async def _do_close_suggestions(interaction: discord.Interaction, db_id: int):
         view=None,
     )
     await _update_event_embed(db_id)
-    await send_to_log_channel(f"Suggestion phase closed. {count} suggestions.", guild_id=interaction.guild_id)
+    await send_event_log(
+        event, db_id,
+        f"Suggestion phase closed. {count} suggestions.",
+        guild_id=interaction.guild_id,
+        lang=lang,
+    )
 
 
 async def admin_select_for_vote(interaction: discord.Interaction, db_id: int):
@@ -2209,9 +2216,11 @@ async def _start_poll(interaction: discord.Interaction, db_id: int,
         view=None,
     )
     await _update_event_embed(db_id)
-    await send_to_log_channel(
+    await send_event_log(
+        event, db_id,
         f"Voting started with {len(selected)} layers for {duration_hours}h",
         guild_id=interaction.guild_id,
+        lang=lang,
     )
 
 
@@ -2330,9 +2339,11 @@ async def admin_end_vote(interaction: discord.Interaction, db_id: int):
         view=None,
     )
     await _update_event_embed(db_id)
-    await send_to_log_channel(
+    await send_event_log(
+        event, db_id,
         f"Voting ended. Winner: {format_layer_short(winner) if winner else 'None'}",
         guild_id=interaction.guild_id,
+        lang=lang,
     )
 
 
@@ -2460,7 +2471,7 @@ async def _do_delete_event(interaction: discord.Interaction, db_id: int):
         embed=discord.Embed(description=f"✅ {t('event.deleted', lang)}", color=discord.Color.green()),
         view=None,
     )
-    await send_to_log_channel("Event deleted", guild_id=interaction.guild_id)
+    await send_event_log(event, db_id, "Event deleted", guild_id=interaction.guild_id, lang=lang)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -2652,10 +2663,12 @@ async def admin_do_remove_suggestion(interaction: discord.Interaction,
     # the slot for the original suggester.
     await _update_event_embed(db_id)
 
-    await send_to_log_channel(
+    await send_event_log(
+        event, db_id,
         f"Suggestion removed by {interaction.user.display_name}: "
         f"{format_layer_short(removed)} (originally by {removed.get('user_name', '?')})",
         guild_id=interaction.guild_id,
+        lang=lang,
     )
 
     removed_line = t("admin.suggestion_removed", lang,
@@ -3920,6 +3933,24 @@ async def _update_event_embed(db_id: int):
     _display_update_tasks[db_id] = asyncio.create_task(_do_update_embed(db_id))
 
 
+async def send_event_log(event: dict, db_id: int, message: str, *,
+                         guild_id: int, level: str = "INFO",
+                         mention_role_id: int = 0,
+                         lang: str = "en") -> bool:
+    """Send a log message that begins with the event's display name.
+
+    Thin wrapper over `send_to_log_channel` for event-scoped log lines so
+    organizers can tell which event a log entry refers to.
+    """
+    prefix = display_name(event, db_id, lang=lang)
+    return await send_to_log_channel(
+        f"**{prefix}** — {message}",
+        guild_id=guild_id,
+        level=level,
+        mention_role_id=mention_role_id,
+    )
+
+
 async def _fetch_vote_counts(target: discord.abc.Messageable, event: dict) -> dict:
     """Read live per-suggestion vote counts from the poll message.
 
@@ -4439,10 +4470,12 @@ async def _finalize_event_creation(interaction: discord.Interaction, settings: d
         await interaction.response.edit_message(content=ack_text, embed=None, view=None)
     else:
         await interaction.response.send_message(ack_text, ephemeral=True)
-    await send_to_log_channel(
+    await send_event_log(
+        event_data, db_id,
         f"Event created in <#{interaction.channel_id}> by {interaction.user.display_name} "
         f"(sources: {', '.join(allowed_sources)})",
         guild_id=interaction.guild_id,
+        lang=lang,
     )
 
 
@@ -4576,10 +4609,12 @@ class EventGateEditView(ui.View):
             content=content, embed=None, view=None,
         )
         await _update_event_embed(self.db_id)
-        await send_to_log_channel(
+        await send_event_log(
+            event, self.db_id,
             f"Allow-list set by {interaction.user.display_name}: "
             f"{len(self.selected_role_ids)} role(s), {len(self.selected_user_ids)} user(s)",
             guild_id=interaction.guild_id,
+            lang=self.lang,
         )
 
     async def _on_cancel(self, interaction: discord.Interaction):
@@ -5011,9 +5046,11 @@ async def _handle_suggestion_timeout(db_id: int, guild_id: int, channel_id: int)
     if auto_started_ids:
         ok = await _auto_start_poll(db_id, auto_started_ids)
         if ok:
-            await send_to_log_channel(
+            await send_event_log(
+                event, db_id,
                 t("phase.auto_vote_started", lang, count=len(auto_started_ids)),
                 guild_id=guild_id,
+                lang=lang,
             )
             return
         # Poll creation failed — fall through to manual-selection path so
@@ -5038,17 +5075,21 @@ async def _handle_suggestion_timeout(db_id: int, guild_id: int, channel_id: int)
             count=suggestion_count,
             max=max_voting,
         )
-        await send_to_log_channel(
+        await send_event_log(
+            event, db_id,
             msg,
             guild_id=guild_id,
             level="WARNING",
             mention_role_id=organizer_role_id,
+            lang=lang,
         )
     elif suggestion_count == 0:
-        await send_to_log_channel(
+        await send_event_log(
+            event, db_id,
             f"Suggestion phase auto-closed with 0 suggestions in <#{channel_id}>",
             guild_id=guild_id,
             level="WARNING",
+            lang=lang,
         )
 
 
@@ -5091,7 +5132,8 @@ async def check_events_loop():
                                         )
                                     db.save_event(rec["db_id"], rec["event"])
                             await _update_event_embed(db_id)
-                            await send_to_log_channel(
+                            await send_event_log(
+                                event, db_id,
                                 f"Suggestion phase auto-opened in <#{channel_id}>",
                                 guild_id=guild_id,
                             )
@@ -5146,7 +5188,8 @@ async def check_events_loop():
                                                     )
                                         await _update_event_embed(db_id)
                                         winner_str = format_layer_short(winner) if winner else "None"
-                                        await send_to_log_channel(
+                                        await send_event_log(
+                                            event, db_id,
                                             f"Poll ended in <#{channel_id}>. Winner: {winner_str}",
                                             guild_id=guild_id,
                                         )
