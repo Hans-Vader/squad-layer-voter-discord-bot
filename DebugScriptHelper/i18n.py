@@ -134,6 +134,10 @@ _STRINGS: dict[str, dict[str, str]] = {
     },
 
     # ── Event management ──────────────────────────────────────────────────
+    "event.fallback_name": {
+        "de": "Event #{db_id}",
+        "en": "Event #{db_id}",
+    },
     "event.created": {
         "de": "Layer-Vote Event erstellt!",
         "en": "Layer vote event created!",
@@ -348,22 +352,6 @@ _STRINGS: dict[str, dict[str, str]] = {
     },
 
     # ── Embed ─────────────────────────────────────────────────────────────
-    "embed.title_suggestion": {
-        "de": "Layer-Vote — Vorschlagsphase",
-        "en": "Layer Vote — Suggestion Phase",
-    },
-    "embed.title_voting": {
-        "de": "Layer-Vote — Abstimmung",
-        "en": "Layer Vote — Voting",
-    },
-    "embed.title_completed": {
-        "de": "Layer-Vote — Abgeschlossen",
-        "en": "Layer Vote — Completed",
-    },
-    "embed.title_created": {
-        "de": "Layer-Vote — Erstellt",
-        "en": "Layer Vote — Created",
-    },
     "embed.status": {
         "de": "Status",
         "en": "Status",
@@ -479,8 +467,8 @@ _STRINGS: dict[str, dict[str, str]] = {
 
     # ── Voting thread (private thread created at /start_vote) ─────────────
     "thread.voting_name": {
-        "de": "Abstimmung — {period}",
-        "en": "Voting — {period}",
+        "de": "Abstimmung — {event_label}",
+        "en": "Voting — {event_label}",
     },
     "thread.voting_welcome": {
         "de": "🗳️ Berechtigte Mitglieder können hier abstimmen.",
@@ -496,12 +484,12 @@ _STRINGS: dict[str, dict[str, str]] = {
         "de": (
             "Wähle die Rollen und Nutzer, die teilnehmen dürfen, dann **Speichern**. "
             "Leere Auswahl = Event offen für alle. Aktuelle Auswahl ist vorausgewählt. "
-            "(Event #{db_id})"
+            "({event_label})"
         ),
         "en": (
             "Pick the roles and users allowed to participate, then **Save**. "
             "Leaving the selection empty makes the event open to everyone. "
-            "The current allow-list is pre-selected. (Event #{db_id})"
+            "The current allow-list is pre-selected. ({event_label})"
         ),
     },
     "roles.picker_placeholder": {
@@ -522,6 +510,14 @@ _STRINGS: dict[str, dict[str, str]] = {
     },
 
     # ── Event creation wizard (Modal + Confirm view) ──────────────────────
+    "event.wizard_name_label": {
+        "de": "Event-Name (optional)",
+        "en": "Event name (optional)",
+    },
+    "event.wizard_name_placeholder": {
+        "de": "z.B. Friday Night Fights — leer = Standardname",
+        "en": "e.g. Friday Night Fights — empty = default name",
+    },
     "event.wizard_title": {
         "de": "Neues Layer-Vote-Event",
         "en": "New layer vote event",
@@ -827,8 +823,12 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "Current: `{current}`. Click ⌨️ to enter a new value (e.g. `60`, `2h`, `1d`).",
     },
     "edit.datetime_prompt": {
-        "de": "Aktuell: `{current}`. Klicke ⌨️, um einen neuen Wert im Format `DD.MM.YYYY HH:MM` einzugeben — leer lassen für „manuell starten“.",
+        "de": "Aktuell: `{current}`. Klicke ⌨️, um einen neuen Wert im Format `DD.MM.YYYY HH:MM` einzugeben — leer lassen für „manuell starten”.",
         "en": "Current: `{current}`. Click ⌨️ to enter a new value as `DD.MM.YYYY HH:MM` — leave blank for manual start.",
+    },
+    "edit.string_prompt": {
+        "de": "Aktuell: `{current}`. Klicke ⌨️, um einen neuen Namen einzugeben (max. {max} Zeichen). Leer lassen, um auf `{fallback}` zurückzusetzen.",
+        "en": "Current: `{current}`. Click ⌨️ to enter a new name (max {max} chars). Leave empty to reset to `{fallback}`.",
     },
     "edit.invalid_datetime": {
         "de": "Ungültiges Datum/Uhrzeit: `{value}`. Erwartetes Format: `DD.MM.YYYY HH:MM`.",
@@ -931,6 +931,10 @@ _STRINGS: dict[str, dict[str, str]] = {
     "edit.prop.gate": {
         "de": "Erlaubte Rollen/Nutzer",
         "en": "Allowed Roles/Users",
+    },
+    "edit.prop.event_name": {
+        "de": "Event-Name",
+        "en": "Event Name",
     },
 }
 

@@ -18,6 +18,40 @@ from config import ADMIN_IDS, LAYERS_JSON_SOURCES, SQUADCALC_BASE_URL
 
 logger = logging.getLogger("layer_vote")
 
+# ---------------------------------------------------------------------------
+# Event name helpers
+# ---------------------------------------------------------------------------
+
+EVENT_NAME_MAX_LENGTH = 100
+
+
+def normalize_event_name(raw: Optional[str]) -> Optional[str]:
+    """Normalize a user-supplied event name.
+
+    Strips whitespace, collapses CR/LF to spaces (titles are single-line),
+    and returns None for empty input so the display layer falls back to the
+    `Event #{db_id}` form.
+    """
+    if not raw:
+        return None
+    cleaned = raw.replace("\r", " ").replace("\n", " ").strip()
+    return cleaned or None
+
+
+def display_name(event: dict, db_id: int, *, lang: str = "en") -> str:
+    """Render the event's display name with fallback to `Event #{db_id}`.
+
+    `db_id` is the SQLite row id (lives on the wrapper record, not inside
+    the event blob — see `database.get_event_by_db_id`). Single source of
+    truth for the fallback rule — every embed title, thread name, log
+    prefix, and admin-panel title calls this.
+    """
+    name = (event.get("event_name") or "").strip()
+    if name:
+        return name
+    return t("event.fallback_name", lang, db_id=db_id)
+
+
 # Layer source whose factionIds and map names map cleanly to SquadCalc params.
 # Layers from any other source still get a clickable map icon, but the URL
 # points at SquadCalc's homepage (since the params would 404) and the
@@ -384,7 +418,7 @@ def _embed_total_chars(embed: Embed) -> int:
     return total
 
 
-def build_event_embed(event: dict, settings: dict,
+def build_event_embed(event: dict, settings: dict, db_id: int,
                       vote_counts: Optional[dict] = None) -> Embed:
     """Build the main event embed displayed in the channel.
 
@@ -396,14 +430,7 @@ def build_event_embed(event: dict, settings: dict,
     phase = event.get("phase", "created")
     lang = settings.get("language", "en")
 
-    title_keys = {
-        "created": "embed.title_created",
-        "suggestions_open": "embed.title_suggestion",
-        "suggestions_closed": "embed.title_suggestion",
-        "voting": "embed.title_voting",
-        "completed": "embed.title_completed",
-    }
-    title = t(title_keys.get(phase, "embed.title_created"), lang)
+    title = display_name(event, db_id, lang=lang)
 
     color_map = {
         "created": discord.Color.greyple(),

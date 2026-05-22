@@ -56,9 +56,12 @@ Use `/history` to see the winners of previous events.
 **Step 1: Create**
 ```
 /create_layer_suggestion
-  suggestion_start: 05.04.2026 18:00    (optional — auto-opens at this time)
+  event_name: Friday Night Fights        (optional — embed title; defaults to "Event #ID")
+  suggestion_start: 05.04.2026 18:00     (optional — auto-opens at this time)
   voting_duration_hours: 24              (optional — how long the poll runs)
 ```
+
+The event name appears as the embed title, in the voting thread name (for gated events), in the log channel, and in the admin panel. Leave it empty to fall back to `Event #ID`. You can rename the event later via the **Edit Event** DM dialog (see Admin Panel below).
 
 **Step 2: Open Suggestions**
 - Wait for the scheduled time, or
@@ -93,6 +96,7 @@ Click the **"Admin"** button on the event embed for quick actions:
 - Select layers for voting
 - End voting
 - Delete the event
+- **Edit Event** — opens a DM dialog where you can rename the event (and tweak per-event config like blacklists, voting duration, allow-list). Pick **Event Name** from the dropdown; submit empty to revert to `Event #ID`.
 
 ### Settings
 
