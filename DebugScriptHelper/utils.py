@@ -25,7 +25,7 @@ logger = logging.getLogger("layer_vote")
 EVENT_NAME_MAX_LENGTH = 100
 
 
-def normalize_event_name(raw):
+def normalize_event_name(raw: Optional[str]) -> Optional[str]:
     """Normalize a user-supplied event name.
 
     Strips whitespace, collapses CR/LF to spaces (titles are single-line),
@@ -50,6 +50,7 @@ def display_name(event: dict, db_id, *, lang: str = "en") -> str:
     if name:
         return name
     return t("event.fallback_name", lang, db_id=db_id)
+
 
 # Layer source whose factionIds and map names map cleanly to SquadCalc params.
 # Layers from any other source still get a clickable map icon, but the URL
