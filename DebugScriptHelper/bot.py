@@ -1633,7 +1633,7 @@ async def handle_admin_panel(interaction: discord.Interaction, db_id: int):
     phase = event.get("phase", "created")
 
     embed = discord.Embed(
-        title=t("button.admin", lang),
+        title=display_name(event, record["db_id"], lang=lang),
         description=t("admin.phase", lang, phase=phase) + "\n" +
                     t("admin.suggestions_count", lang, count=len(event.get("suggestions", []))),
         color=discord.Color.dark_red(),
