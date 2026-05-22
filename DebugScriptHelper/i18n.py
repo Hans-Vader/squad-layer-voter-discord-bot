@@ -823,8 +823,12 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "Current: `{current}`. Click ⌨️ to enter a new value (e.g. `60`, `2h`, `1d`).",
     },
     "edit.datetime_prompt": {
-        "de": "Aktuell: `{current}`. Klicke ⌨️, um einen neuen Wert im Format `DD.MM.YYYY HH:MM` einzugeben — leer lassen für „manuell starten“.",
+        "de": "Aktuell: `{current}`. Klicke ⌨️, um einen neuen Wert im Format `DD.MM.YYYY HH:MM` einzugeben — leer lassen für „manuell starten”.",
         "en": "Current: `{current}`. Click ⌨️ to enter a new value as `DD.MM.YYYY HH:MM` — leave blank for manual start.",
+    },
+    "edit.string_prompt": {
+        "de": "Aktuell: `{current}`. Klicke ⌨️, um einen neuen Namen einzugeben (max. {max} Zeichen). Leer lassen, um auf `{fallback}` zurückzusetzen.",
+        "en": "Current: `{current}`. Click ⌨️ to enter a new name (max {max} chars). Leave empty to reset to `{fallback}`.",
     },
     "edit.invalid_datetime": {
         "de": "Ungültiges Datum/Uhrzeit: `{value}`. Erwartetes Format: `DD.MM.YYYY HH:MM`.",
@@ -927,6 +931,10 @@ _STRINGS: dict[str, dict[str, str]] = {
     "edit.prop.gate": {
         "de": "Erlaubte Rollen/Nutzer",
         "en": "Allowed Roles/Users",
+    },
+    "edit.prop.event_name": {
+        "de": "Event-Name",
+        "en": "Event Name",
     },
 }
 

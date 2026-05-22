@@ -2739,6 +2739,11 @@ def _format_duration_seconds(seconds: int) -> str:
 
 def _format_property_value(value, kind: str) -> str:
     """Compact one-line display of a property's current value."""
+    if kind == "string":
+        if not value:
+            return "—"
+        s = str(value)
+        return (s[:40] + "…") if len(s) > 40 else s
     if kind == "list":
         if not value:
             return "—"
@@ -2787,6 +2792,7 @@ def _write_event_property(event: dict, key: str, target: str, value) -> None:
 # event (sources, voting params, suggestion timer). `source` is a callable
 # returning the available choices for "list" kinds.
 _EDIT_PROPERTIES: list[dict] = [
+    {"key": "event_name",                "label_key": "edit.prop.event_name",            "kind": "string",   "target": "event"},
     {"key": "allowed_gamemodes",         "label_key": "edit.prop.allowed_gamemodes",     "kind": "list",     "target": "config", "source": db.get_unique_gamemodes},
     {"key": "blacklisted_maps",          "label_key": "edit.prop.blacklisted_maps",      "kind": "list",     "target": "config", "source": db.get_unique_maps},
     {"key": "blacklisted_factions",      "label_key": "edit.prop.blacklisted_factions",  "kind": "list",     "target": "config", "source": db.get_unique_factions},
@@ -3233,6 +3239,19 @@ async def _show_property_editor(interaction: discord.Interaction, user_id: int,
         )
         await interaction.response.edit_message(embed=embed, view=view)
 
+    elif prop["kind"] == "string":
+        view = EditScalarView(user_id, db_id, guild_id, lang, prop)
+        _set_active_view(user_id, view)
+        fallback = t("event.fallback_name", lang, db_id=db_id)
+        desc = t(
+            "edit.string_prompt", lang,
+            current=_format_property_value(current, "string"),
+            max=EVENT_NAME_MAX_LENGTH,
+            fallback=fallback,
+        )
+        embed = discord.Embed(title=label, description=desc, color=discord.Color.blurple())
+        await interaction.response.edit_message(embed=embed, view=view)
+
     else:  # int / duration / vote_duration / datetime — all go through a Modal
         view = EditScalarView(user_id, db_id, guild_id, lang, prop)
         _set_active_view(user_id, view)
@@ -3414,9 +3433,12 @@ class EditScalarView(ui.View):
         self.add_item(cancel)
 
     async def _on_edit(self, interaction: discord.Interaction):
-        modal_cls = (EditDateTimeModal
-                     if self.prop["kind"] == "datetime"
-                     else EditScalarModal)
+        if self.prop["kind"] == "datetime":
+            modal_cls = EditDateTimeModal
+        elif self.prop["kind"] == "string":
+            modal_cls = EditStringModal
+        else:
+            modal_cls = EditScalarModal
         modal = modal_cls(self.user_id, self.db_id, self.guild_id,
                           self.lang, self.prop)
         await interaction.response.send_modal(modal)
@@ -3524,6 +3546,35 @@ class EditScalarModal(ui.Modal):
                     t("phase.invalid_duration", self.lang, value=raw), ephemeral=True)
                 return
 
+        await _apply_edit(interaction, self.user_id, self.db_id, self.guild_id,
+                          self.lang, self.prop, value, via_modal=True)
+
+
+class EditStringModal(ui.Modal):
+    """Text-input modal for string properties (currently just `event_name`).
+
+    Empty submission clears the value — for `event_name` this reverts the
+    display to the `Event #{db_id}` fallback.
+    """
+
+    def __init__(self, user_id: int, db_id: int, guild_id: int, lang: str,
+                 prop: dict):
+        super().__init__(title=t(prop["label_key"], lang)[:45])
+        self.user_id = user_id
+        self.db_id = db_id
+        self.guild_id = guild_id
+        self.lang = lang
+        self.prop = prop
+
+        self.value_input = ui.TextInput(
+            label=t("edit.input_label", lang)[:45],
+            required=False,
+            max_length=EVENT_NAME_MAX_LENGTH,
+        )
+        self.add_item(self.value_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        value = normalize_event_name(self.value_input.value)
         await _apply_edit(interaction, self.user_id, self.db_id, self.guild_id,
                           self.lang, self.prop, value, via_modal=True)
 
