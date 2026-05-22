@@ -134,6 +134,10 @@ _STRINGS: dict[str, dict[str, str]] = {
     },
 
     # ── Event management ──────────────────────────────────────────────────
+    "event.fallback_name": {
+        "de": "Event #{db_id}",
+        "en": "Event #{db_id}",
+    },
     "event.created": {
         "de": "Layer-Vote Event erstellt!",
         "en": "Layer vote event created!",
