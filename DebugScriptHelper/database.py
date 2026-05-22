@@ -669,15 +669,20 @@ def _snapshot_event_config(settings: Optional[dict]) -> dict:
 
 
 def build_default_event(suggestion_start_time=None,
-                        settings: Optional[dict] = None) -> dict:
+                        settings: Optional[dict] = None,
+                        event_name: Optional[str] = None) -> dict:
     """Build a fresh event data dict.
 
     `settings` is the guild settings dict at creation time; the event
     captures a snapshot of the relevant keys (see EVENT_CONFIG_KEYS) so
     each event has its own independently-editable configuration.
+
+    `event_name` is an optional human-readable label. None / empty means
+    "use the `Event #{db_id}` fallback at display time".
     """
     return {
         "phase": "created",
+        "event_name": event_name,
         "event_message_id": None,
         "suggestion_start_time": suggestion_start_time,
         "suggestion_end_time": None,
