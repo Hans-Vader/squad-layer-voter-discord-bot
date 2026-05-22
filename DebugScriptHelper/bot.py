@@ -30,6 +30,8 @@ from utils import (
     format_layer_short, format_layer_poll_option, suggestion_matches,
     build_event_embed,
     set_log_channel, send_to_log_channel,
+    normalize_event_name,
+    EVENT_NAME_MAX_LENGTH,
 )
 
 logger = logging.getLogger("layer_vote")
@@ -4218,6 +4220,13 @@ class EventScheduleModal(ui.Modal):
         vote_hours = int(settings.get("default_voting_duration_hours", 24) or 24)
         vote_default = f"{vote_hours}h"
 
+        self.event_name_input = ui.TextInput(
+            label=t("event.wizard_name_label", lang),
+            placeholder=t("event.wizard_name_placeholder", lang),
+            required=False, max_length=EVENT_NAME_MAX_LENGTH,
+        )
+        self.add_item(self.event_name_input)
+
         self.start = ui.TextInput(
             label=t("event.wizard_start_label", lang),
             placeholder="DD.MM.YYYY HH:MM",
@@ -4268,6 +4277,7 @@ class EventScheduleModal(ui.Modal):
                 ephemeral=True)
             return
 
+        event_name = normalize_event_name(self.event_name_input.value)
         view = EventCreateConfirmView(
             lang=lang,
             sst=sst,
@@ -4275,6 +4285,7 @@ class EventScheduleModal(ui.Modal):
             voting_duration_hours=voting_duration_hours,
             offered_sources=self.offered_sources,
             allow_multiple_votes=bool(self.settings.get("default_allow_multiple_votes", False)),
+            event_name=event_name,
         )
         embed = discord.Embed(
             title=t("event.wizard_confirm_title", lang),
@@ -4293,7 +4304,7 @@ class EventCreateConfirmView(ui.View):
     """
 
     def __init__(self, lang, sst, suggestion_duration_seconds, voting_duration_hours,
-                 offered_sources, allow_multiple_votes):
+                 offered_sources, allow_multiple_votes, event_name):
         super().__init__(timeout=300)
         self.lang = lang
         self.sst = sst
@@ -4301,6 +4312,7 @@ class EventCreateConfirmView(ui.View):
         self.voting_duration_hours = voting_duration_hours
         self.offered_sources = list(offered_sources)
         self.allow_multiple_votes = bool(allow_multiple_votes)
+        self.event_name = event_name
         self.selected_role_ids: list[int] = []
         self.selected_user_ids: list[int] = []
         self.selected_sources: list[str] = list(offered_sources)
@@ -4395,6 +4407,7 @@ class EventCreateConfirmView(ui.View):
             allowed_role_ids=self.selected_role_ids,
             allowed_user_ids=self.selected_user_ids,
             ack_via_followup=True,
+            event_name=self.event_name,
         )
 
 
@@ -4404,7 +4417,8 @@ async def _finalize_event_creation(interaction: discord.Interaction, settings: d
                                    voting_duration_hours, allow_multiple_votes,
                                    allowed_role_ids: list[int],
                                    allowed_user_ids: list[int],
-                                   ack_via_followup: bool):
+                                   ack_via_followup: bool,
+                                   event_name: Optional[str] = None):
     """Create the event row and post its embed.
 
     Sole call site is the EventCreateConfirmView confirm button — the
@@ -4412,7 +4426,7 @@ async def _finalize_event_creation(interaction: discord.Interaction, settings: d
     "single-source fast path" anymore (the view just hides the source
     select when there's nothing to pick).
     """
-    event_data = db.build_default_event(suggestion_start_time=sst, settings=settings)
+    event_data = db.build_default_event(suggestion_start_time=sst, settings=settings, event_name=event_name)
     event_data["voting_duration_hours"] = max(1, min(MAX_VOTING_DURATION_HOURS, voting_duration_hours))
     event_data["suggestion_duration_seconds"] = suggestion_duration_seconds
     event_data["allow_multiple_votes"] = bool(allow_multiple_votes)

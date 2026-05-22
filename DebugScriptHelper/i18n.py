@@ -526,6 +526,14 @@ _STRINGS: dict[str, dict[str, str]] = {
     },
 
     # ── Event creation wizard (Modal + Confirm view) ──────────────────────
+    "event.wizard_name_label": {
+        "de": "Event-Name (optional)",
+        "en": "Event name (optional)",
+    },
+    "event.wizard_name_placeholder": {
+        "de": "z.B. Friday Night Fights — leer = Standardname",
+        "en": "e.g. Friday Night Fights — empty = default name",
+    },
     "event.wizard_title": {
         "de": "Neues Layer-Vote-Event",
         "en": "New layer vote event",
