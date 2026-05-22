@@ -352,22 +352,6 @@ _STRINGS: dict[str, dict[str, str]] = {
     },
 
     # ── Embed ─────────────────────────────────────────────────────────────
-    "embed.title_suggestion": {
-        "de": "Layer-Vote — Vorschlagsphase",
-        "en": "Layer Vote — Suggestion Phase",
-    },
-    "embed.title_voting": {
-        "de": "Layer-Vote — Abstimmung",
-        "en": "Layer Vote — Voting",
-    },
-    "embed.title_completed": {
-        "de": "Layer-Vote — Abgeschlossen",
-        "en": "Layer Vote — Completed",
-    },
-    "embed.title_created": {
-        "de": "Layer-Vote — Erstellt",
-        "en": "Layer Vote — Created",
-    },
     "embed.status": {
         "de": "Status",
         "en": "Status",

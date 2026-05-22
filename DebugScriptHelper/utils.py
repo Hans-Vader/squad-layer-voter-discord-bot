@@ -418,7 +418,7 @@ def _embed_total_chars(embed: Embed) -> int:
     return total
 
 
-def build_event_embed(event: dict, settings: dict,
+def build_event_embed(event: dict, settings: dict, db_id,
                       vote_counts: Optional[dict] = None) -> Embed:
     """Build the main event embed displayed in the channel.
 
@@ -430,14 +430,7 @@ def build_event_embed(event: dict, settings: dict,
     phase = event.get("phase", "created")
     lang = settings.get("language", "en")
 
-    title_keys = {
-        "created": "embed.title_created",
-        "suggestions_open": "embed.title_suggestion",
-        "suggestions_closed": "embed.title_suggestion",
-        "voting": "embed.title_voting",
-        "completed": "embed.title_completed",
-    }
-    title = t(title_keys.get(phase, "embed.title_created"), lang)
+    title = display_name(event, db_id, lang=lang)
 
     color_map = {
         "created": discord.Color.greyple(),

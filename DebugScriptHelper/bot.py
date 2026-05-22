@@ -4002,7 +4002,7 @@ async def _do_update_embed(db_id: int):
             target = await _resolve_poll_target(channel, event)
             vote_counts = await _fetch_vote_counts(target, event)
 
-        embed = build_event_embed(event, settings, vote_counts=vote_counts)
+        embed = build_event_embed(event, settings, db_id, vote_counts=vote_counts)
         message = await channel.fetch_message(msg_id)
 
         lang = settings.get("language", "en")
@@ -4438,7 +4438,7 @@ async def _finalize_event_creation(interaction: discord.Interaction, settings: d
     # follow-up update both need it baked into their button custom_ids.
     db_id = db.create_event(interaction.guild_id, interaction.channel_id, event_data)
 
-    embed = build_event_embed(event_data, settings)
+    embed = build_event_embed(event_data, settings, db_id)
     view = EventActionView(db_id, lang)
     msg = await interaction.channel.send(embed=embed, view=view)
 
