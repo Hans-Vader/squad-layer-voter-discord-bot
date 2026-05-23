@@ -2186,12 +2186,6 @@ async def _start_poll(interaction: discord.Interaction, db_id: int,
     target = voting_thread if voting_thread is not None else interaction.channel
     poll_message = await target.send(poll=poll)
 
-    if voting_thread is not None:
-        try:
-            await voting_thread.edit(locked=True)
-        except discord.HTTPException as e:
-            logger.warning(f"Failed to lock voting thread {voting_thread.id}: {e}")
-
     poll_end_time = (
         getattr(poll_message.poll, "expires_at", None)
         or datetime.now() + timedelta(hours=duration_hours)
@@ -2268,12 +2262,6 @@ async def _auto_start_poll(db_id: int, selected_ids: list[str]) -> bool:
     except Exception as e:
         logger.error(f"Failed to send auto-poll: {e}")
         return False
-
-    if voting_thread is not None:
-        try:
-            await voting_thread.edit(locked=True)
-        except discord.HTTPException as e:
-            logger.warning(f"Failed to lock voting thread {voting_thread.id}: {e}")
 
     poll_end_time = (
         getattr(poll_message.poll, "expires_at", None)
