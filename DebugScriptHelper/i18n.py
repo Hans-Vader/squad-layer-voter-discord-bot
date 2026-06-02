@@ -416,6 +416,10 @@ _STRINGS: dict[str, dict[str, str]] = {
         "de": "Klick auf die Karte --> 🗺 um SquadCalc zu öffnen",
         "en": "Click on the map --> 🗺 to open SquadCalc",
     },
+    "squadcalc.open": {
+        "de": "In SquadCalc öffnen",
+        "en": "Open in SquadCalc",
+    },
     "embed.footer_legend_supermod": {
         "de": "SPM/SU = SuperMod | GoingDark = SuperMod Nacht",
         "en": "SPM/SU = SuperMod | GoingDark = SuperMod Night",

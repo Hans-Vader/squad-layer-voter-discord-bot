@@ -28,7 +28,7 @@ from utils import (
     has_organizer_role, is_guild_admin,
     check_role_gate,
     format_layer_short, format_layer_poll_option, suggestion_matches,
-    build_event_embed,
+    build_event_embed, build_squadcalc_url,
     set_log_channel, send_to_log_channel,
     normalize_event_name,
     EVENT_NAME_MAX_LENGTH,
@@ -1431,10 +1431,37 @@ class Team2UnitSelect(ui.Select):
         await _show_confirm(interaction, state, settings)
 
 
+def _squadcalc_link_line(suggestion: dict, lang: str) -> str:
+    """Markdown 'Open in SquadCalc' link line for a suggestion.
+
+    Returns "" when no SquadCalc URL applies (integration disabled, or a
+    non-main layer source that SquadCalc can't resolve).
+    """
+    url = build_squadcalc_url(suggestion)
+    if not url:
+        return ""
+    return f"\n\n🗺️ [{t('squadcalc.open', lang)}]({url})"
+
+
 async def _show_confirm(interaction: discord.Interaction, state: SuggestState, settings: dict):
     """Show the confirmation step with Submit/Cancel buttons."""
     lang = settings.get("language", "en") if settings else "en"
     mode_str = f"{state.gamemode} {state.layer_version}".strip() if state.layer_version else state.gamemode
+
+    # Preview-shaped suggestion for the SquadCalc link (mirrors the fields
+    # build_squadcalc_url reads from a stored suggestion).
+    preview = {
+        "source": state.source,
+        "map_name": state.map_name,
+        "gamemode": state.gamemode,
+        "layer_version": state.layer_version,
+        "team1_faction": state.team1_faction,
+        "team2_faction": state.team2_faction,
+        "team1_unit": state.team1_unit,
+        "team2_unit": state.team2_unit,
+        "team1_unit_prefix": _resolve_unit_prefix(state.layer_data, state.team1_faction, 1),
+        "team2_unit_prefix": _resolve_unit_prefix(state.layer_data, state.team2_faction, 2),
+    }
 
     view = ConfirmSuggestionView(lang)
     embed = discord.Embed(
@@ -1444,6 +1471,7 @@ async def _show_confirm(interaction: discord.Interaction, state: SuggestState, s
             f"**Mode:** {mode_str}\n"
             f"**Team 1:** {state.team1_faction} / {state.team1_unit}\n"
             f"**Team 2:** {state.team2_faction} / {state.team2_unit}"
+            f"{_squadcalc_link_line(preview, lang)}"
         ),
         color=discord.Color.gold(),
     )
@@ -2899,7 +2927,8 @@ async def _confirm_self_remove_suggestion(interaction: discord.Interaction,
     embed = discord.Embed(
         title=t("self_remove.confirm_title", lang),
         description=t("self_remove.confirm_prompt", lang,
-                      layer=format_layer_short(suggestion)),
+                      layer=format_layer_short(suggestion))
+        + _squadcalc_link_line(suggestion, lang),
         color=discord.Color.orange(),
     )
 
