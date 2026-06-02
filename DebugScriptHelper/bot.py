@@ -2123,29 +2123,47 @@ async def _resolve_poll_target(channel: discord.abc.Messageable, event: dict) ->
 
 async def _create_voting_thread(channel: discord.TextChannel, event: dict,
                                  db_id: int, lang: str) -> Optional[discord.Thread]:
-    """Create the private voting thread and pre-populate its members.
+    """Create the voting thread for an event.
 
-    Returns None when the event has no allow-list (caller falls back to
-    posting the poll directly in `channel`). Errors during the optional
-    role-mention auto-invite are non-fatal — eligible users can always
-    use the Join Voting button to opt in afterwards.
+    Gated events (with an allow-list) get a PRIVATE thread whose members are
+    pre-populated via role pings + explicit adds. Open events (no allow-list)
+    get a PUBLIC thread so the poll lives in its own thread too, consistent
+    with gated events — anyone in the channel can open it and vote.
+
+    Returns the thread, or None if thread creation failed (caller then falls
+    back to posting the poll directly in `channel`). Errors during the
+    optional member auto-invite are non-fatal — eligible users can always use
+    the Join Voting button to opt in afterwards.
     """
     role_ids = event.get("allowed_role_ids") or []
     user_ids = event.get("allowed_user_ids") or []
-    if not role_ids and not user_ids:
-        return None
+    gated = bool(role_ids or user_ids)
+
+    kwargs = dict(
+        name=t("thread.voting_name", lang,
+               event_label=display_name(event, db_id, lang=lang)),
+        auto_archive_duration=10080,  # 7 days
+    )
+    if gated:
+        kwargs["type"] = discord.ChannelType.private_thread
+        kwargs["invitable"] = False  # only the bot/mods can add others
+    else:
+        kwargs["type"] = discord.ChannelType.public_thread
 
     try:
-        thread = await channel.create_thread(
-            name=t("thread.voting_name", lang,
-                   event_label=display_name(event, db_id, lang=lang)),
-            type=discord.ChannelType.private_thread,
-            invitable=False,  # only the bot/mods can add others
-            auto_archive_duration=10080,  # 7 days
-        )
+        thread = await channel.create_thread(**kwargs)
     except discord.HTTPException as e:
         logger.error(f"Failed to create voting thread in #{channel.id}: {e}")
         return None
+
+    if not gated:
+        # Open event: public thread, no allow-list to ping. Post a neutral
+        # welcome so the thread isn't empty until the poll lands.
+        try:
+            await thread.send(t("thread.voting_welcome_open", lang))
+        except discord.HTTPException as e:
+            logger.warning(f"Failed to send welcome in voting thread {thread.id}: {e}")
+        return thread
 
     # Welcome message + role pings → Discord auto-adds role members to the
     # private thread. allowed_mentions is set so the pings actually fire.

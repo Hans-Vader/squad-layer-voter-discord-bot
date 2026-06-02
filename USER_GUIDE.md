@@ -32,7 +32,7 @@ Removing frees the slot, so you can suggest again (up to the per-user limit). Th
 
 ### Voting
 
-When the admin starts a vote, a Discord poll appears in the channel. Simply vote for your preferred layer.
+When the admin starts a vote, a Discord poll appears in a dedicated **voting thread** for the event (public for open events, private for restricted ones). Use the **Join Voting** button on the event embed to jump to it, then vote for your preferred layer.
 
 ### Viewing Past Winners
 

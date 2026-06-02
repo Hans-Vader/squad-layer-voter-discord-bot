@@ -486,6 +486,10 @@ _STRINGS: dict[str, dict[str, str]] = {
         "de": "🗳️ Berechtigte Mitglieder können hier abstimmen.",
         "en": "🗳️ Eligible members can vote here.",
     },
+    "thread.voting_welcome_open": {
+        "de": "🗳️ Hier wird über dieses Event abgestimmt.",
+        "en": "🗳️ Voting for this event takes place here.",
+    },
 
     # ── Admin → Edit Allow-list (per-event role/user picker) ──────────────
     "roles.picker_title": {
