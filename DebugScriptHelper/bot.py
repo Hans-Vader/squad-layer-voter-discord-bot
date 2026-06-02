@@ -693,7 +693,7 @@ class EventActionView(ui.View):
     all active events and binding each view to its event_message_id.
     """
 
-    def __init__(self, db_id: int, lang: str = "en"):
+    def __init__(self, db_id: int, lang: str = "en", phase: str = "created"):
         super().__init__(timeout=None)
         self.db_id = db_id
 
@@ -705,6 +705,19 @@ class EventActionView(ui.View):
         )
         suggest.callback = self._suggest
         self.add_item(suggest)
+
+        # Self-removal is only meaningful while suggestions are open, so the
+        # button only exists in that phase — once suggestions close it's gone
+        # rather than visible-but-rejecting.
+        if phase == "suggestions_open":
+            remove = ui.Button(
+                label=t("button.remove_own", lang),
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"event_action:remove_own:{db_id}",
+                emoji="🗑️",
+            )
+            remove.callback = self._remove_own
+            self.add_item(remove)
 
         info = ui.Button(
             label=t("button.info", lang),
@@ -726,6 +739,9 @@ class EventActionView(ui.View):
 
     async def _suggest(self, interaction: discord.Interaction):
         await handle_suggest_start(interaction, self.db_id)
+
+    async def _remove_own(self, interaction: discord.Interaction):
+        await handle_remove_own_suggestion(interaction, self.db_id)
 
     async def _info(self, interaction: discord.Interaction):
         await handle_info(interaction, self.db_id)
@@ -805,7 +821,7 @@ def _view_for_phase(db_id: int, phase: str, lang: str) -> Optional[ui.View]:
         return CompletedPhaseView(db_id, lang)
     if phase == "voting":
         return VotingPhaseView(db_id, lang)
-    return EventActionView(db_id, lang)
+    return EventActionView(db_id, lang, phase)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1656,6 +1672,7 @@ class AdminPanelView(ui.View):
             self.add_item(AdminButton("close_suggestions", t("admin.close_suggestions", lang), discord.ButtonStyle.secondary, "⏹️"))
         elif phase == "suggestions_closed":
             self.add_item(AdminButton("select_for_vote", t("admin.select_for_vote", lang), discord.ButtonStyle.primary, "🗳️"))
+            self.add_item(AdminButton("reopen_suggestions", t("admin.reopen_suggestions", lang), discord.ButtonStyle.secondary, "🔄"))
         elif phase == "voting":
             self.add_item(AdminButton("end_vote", t("admin.end_vote", lang), discord.ButtonStyle.danger, "🏁"))
 
@@ -1698,6 +1715,8 @@ class AdminButton(ui.Button):
             await admin_open_suggestions(interaction, db_id)
         elif self.action == "close_suggestions":
             await admin_close_suggestions(interaction, db_id)
+        elif self.action == "reopen_suggestions":
+            await admin_reopen_suggestions(interaction, db_id)
         elif self.action == "select_for_vote":
             await admin_select_for_vote(interaction, db_id)
         elif self.action == "end_vote":
@@ -1850,6 +1869,44 @@ async def _do_close_suggestions(interaction: discord.Interaction, db_id: int):
         guild_id=interaction.guild_id,
         lang=lang,
     )
+
+
+async def admin_reopen_suggestions(interaction: discord.Interaction, db_id: int):
+    """Reopen a closed suggestion phase: suggestions_closed → suggestions_open.
+
+    Mirror of admin_open_suggestions but for the inverse transition. No
+    auto-close timer is set (suggestion_end_time = None) so the phase stays
+    open until the organizer closes it again — restoring a stale past
+    end_time would make the scheduler close it again immediately.
+    """
+    lock = _get_guild_lock(interaction.guild_id)
+    async with lock:
+        record = db.get_event_by_db_id(interaction.guild_id, db_id)
+        if not record:
+            return
+        event = record["event"]
+        settings = db.get_guild_settings(interaction.guild_id)
+        lang = settings.get("language", "en") if settings else "en"
+
+        if event.get("phase") != "suggestions_closed":
+            await interaction.response.send_message(
+                embed=discord.Embed(description=t("phase.not_closed", lang),
+                                    color=discord.Color.orange()),
+                ephemeral=True,
+            )
+            return
+
+        event["phase"] = "suggestions_open"
+        event["suggestion_end_time"] = None
+        db.save_event(record["db_id"], event)
+
+    ack_text = t("phase.suggestions_reopened", lang)
+    await interaction.response.send_message(
+        embed=discord.Embed(description=f"✅ {ack_text}", color=discord.Color.green()),
+        ephemeral=True,
+    )
+    await _update_event_embed(db_id)
+    await send_event_log(event, db_id, ack_text, guild_id=interaction.guild_id, lang=lang)
 
 
 async def admin_select_for_vote(interaction: discord.Interaction, db_id: int):
@@ -2186,12 +2243,6 @@ async def _start_poll(interaction: discord.Interaction, db_id: int,
     target = voting_thread if voting_thread is not None else interaction.channel
     poll_message = await target.send(poll=poll)
 
-    if voting_thread is not None:
-        try:
-            await voting_thread.edit(locked=True)
-        except discord.HTTPException as e:
-            logger.warning(f"Failed to lock voting thread {voting_thread.id}: {e}")
-
     poll_end_time = (
         getattr(poll_message.poll, "expires_at", None)
         or datetime.now() + timedelta(hours=duration_hours)
@@ -2268,12 +2319,6 @@ async def _auto_start_poll(db_id: int, selected_ids: list[str]) -> bool:
     except Exception as e:
         logger.error(f"Failed to send auto-poll: {e}")
         return False
-
-    if voting_thread is not None:
-        try:
-            await voting_thread.edit(locked=True)
-        except discord.HTTPException as e:
-            logger.warning(f"Failed to lock voting thread {voting_thread.id}: {e}")
 
     poll_end_time = (
         getattr(poll_message.poll, "expires_at", None)
@@ -2696,6 +2741,232 @@ async def admin_do_remove_suggestion(interaction: discord.Interaction,
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# USER SELF-REMOVAL — players remove their own suggestions (capped per event)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _self_removal_limit(event: dict, settings: dict) -> int:
+    """How many self-removals this event allows per user (0 = disabled)."""
+    return _event_settings(event, settings).get("max_self_removals_per_user", 1)
+
+
+def _self_removals_used(event: dict, user_id) -> int:
+    """How many self-removals the given user has already spent this event."""
+    return (event.get("user_removal_counts") or {}).get(str(user_id), 0)
+
+
+class SelfRemoveSuggestionView(ui.View):
+    """Ephemeral picker listing only the caller's own suggestions.
+
+    A user can hold at most `max_suggestions_per_user` (≤10) suggestions, so a
+    single Select always fits Discord's 25-option cap — no chunking needed,
+    unlike the admin RemoveSuggestionView.
+    """
+
+    def __init__(self, suggestions: list[dict], lang: str, db_id: int):
+        super().__init__(timeout=120)
+        self.db_id = db_id
+        self.add_item(SelfRemoveSuggestionSelect(suggestions, lang))
+
+
+class SelfRemoveSuggestionSelect(ui.Select):
+    def __init__(self, suggestions: list[dict], lang: str):
+        options = [
+            discord.SelectOption(
+                label=_remove_option_label(s),
+                value=s["id"],
+                description=format_layer_short(s)[:100] or None,
+            )
+            for s in suggestions if s.get("id")
+        ]
+        super().__init__(placeholder=t("self_remove.select", lang),
+                         options=options, min_values=1, max_values=1)
+        self.lang = lang
+
+    async def callback(self, interaction: discord.Interaction):
+        await _confirm_self_remove_suggestion(
+            interaction, self.view.db_id, self.values[0], self.lang)
+
+
+async def handle_remove_own_suggestion(interaction: discord.Interaction, db_id: int):
+    """Let a user remove one of their own suggestions during the open phase,
+    bounded by the per-event self-removal limit. Mirrors handle_suggest_start's
+    validation order so behaviour stays consistent."""
+    settings = db.get_guild_settings(interaction.guild_id)
+    if not settings:
+        await interaction.response.send_message(
+            t("general.guild_not_configured", "en"), ephemeral=True)
+        return
+
+    lang = settings.get("language", "en")
+
+    record = db.get_event_by_db_id(interaction.guild_id, db_id)
+    if not record:
+        await interaction.response.send_message(t("event.no_event", lang), ephemeral=True)
+        return
+
+    event = record["event"]
+    if event.get("phase") != "suggestions_open":
+        await interaction.response.send_message(t("suggest.not_open", lang), ephemeral=True)
+        return
+
+    limit = _self_removal_limit(event, settings)
+    if limit <= 0:
+        await interaction.response.send_message(
+            t("self_remove.disabled", lang), ephemeral=True)
+        return
+
+    own = [s for s in event.get("suggestions", [])
+           if str(s.get("user_id")) == str(interaction.user.id)]
+    if not own:
+        await interaction.response.send_message(
+            t("self_remove.none", lang), ephemeral=True)
+        return
+
+    if _self_removals_used(event, interaction.user.id) >= limit:
+        await interaction.response.send_message(
+            t("self_remove.limit_reached", lang, max=limit), ephemeral=True)
+        return
+
+    embed = discord.Embed(
+        title=t("self_remove.title", lang),
+        description=t("self_remove.prompt", lang, count=len(own)),
+        color=discord.Color.dark_red(),
+    )
+    await interaction.response.send_message(
+        embed=embed, view=SelfRemoveSuggestionView(own, lang, db_id),
+        ephemeral=True)
+
+
+async def _confirm_self_remove_suggestion(interaction: discord.Interaction,
+                                          db_id: int, suggestion_id: str,
+                                          lang: str) -> None:
+    """Two-step delete: show a confirmation embed, route Confirm to the actual
+    removal. Re-validates the suggestion is still present and owned by the
+    caller before prompting."""
+    record = db.get_event_by_db_id(interaction.guild_id, db_id)
+    if not record:
+        await interaction.response.edit_message(
+            embed=discord.Embed(description=t("event.no_event", lang),
+                                color=discord.Color.red()),
+            view=None,
+        )
+        return
+    suggestion = next(
+        (s for s in record["event"].get("suggestions", [])
+         if s.get("id") == suggestion_id
+         and str(s.get("user_id")) == str(interaction.user.id)),
+        None,
+    )
+    if suggestion is None:
+        await interaction.response.edit_message(
+            embed=discord.Embed(description=t("self_remove.not_found", lang),
+                                color=discord.Color.orange()),
+            view=None,
+        )
+        return
+
+    embed = discord.Embed(
+        title=t("self_remove.confirm_title", lang),
+        description=t("self_remove.confirm_prompt", lang,
+                      layer=format_layer_short(suggestion)),
+        color=discord.Color.orange(),
+    )
+
+    async def confirm_cb(inter: discord.Interaction, _db_id: int):
+        await do_remove_own_suggestion(inter, _db_id, suggestion_id)
+
+    await interaction.response.edit_message(
+        embed=embed,
+        view=ConfirmActionView(lang, confirm_cb, db_id),
+    )
+
+
+async def do_remove_own_suggestion(interaction: discord.Interaction,
+                                   db_id: int, suggestion_id: str):
+    """Remove the caller's own suggestion and spend one self-removal. All
+    ownership and limit checks are re-run inside the guild lock to guard
+    against double-clicks and races."""
+    settings = db.get_guild_settings(interaction.guild_id)
+    lang = settings.get("language", "en") if settings else "en"
+
+    removed: Optional[dict] = None
+    remaining_uses = 0
+    lock = _get_guild_lock(interaction.guild_id)
+    async with lock:
+        record = db.get_event_by_db_id(interaction.guild_id, db_id)
+        if not record:
+            await interaction.response.edit_message(
+                embed=discord.Embed(description=t("event.no_event", lang),
+                                    color=discord.Color.red()),
+                view=None,
+            )
+            return
+
+        event = record["event"]
+        if event.get("phase") != "suggestions_open":
+            await interaction.response.edit_message(
+                embed=discord.Embed(description=t("suggest.not_open", lang),
+                                    color=discord.Color.orange()),
+                view=None,
+            )
+            return
+
+        limit = _self_removal_limit(event, settings)
+        used = _self_removals_used(event, interaction.user.id)
+        if limit <= 0 or used >= limit:
+            await interaction.response.edit_message(
+                embed=discord.Embed(
+                    description=t("self_remove.limit_reached", lang, max=limit),
+                    color=discord.Color.orange()),
+                view=None,
+            )
+            return
+
+        new_list: list[dict] = []
+        for s in event.get("suggestions", []):
+            if (removed is None and s.get("id") == suggestion_id
+                    and str(s.get("user_id")) == str(interaction.user.id)):
+                removed = s
+                continue
+            new_list.append(s)
+
+        if removed is None:
+            await interaction.response.edit_message(
+                embed=discord.Embed(description=t("self_remove.not_found", lang),
+                                    color=discord.Color.orange()),
+                view=None,
+            )
+            return
+
+        event["suggestions"] = new_list
+        event.setdefault("user_removal_counts", {})[str(interaction.user.id)] = used + 1
+        remaining_uses = limit - (used + 1)
+        db.save_event(record["db_id"], event)
+
+    # The per-user *suggestion* limit is computed live from event["suggestions"]
+    # (see handle_suggest_start), so removal automatically frees a slot for the
+    # user to suggest again.
+    await _update_event_embed(db_id)
+
+    await send_event_log(
+        event, db_id,
+        f"Suggestion self-removed by {interaction.user.display_name}: "
+        f"{format_layer_short(removed)}",
+        guild_id=interaction.guild_id,
+        lang=lang,
+    )
+
+    await interaction.response.edit_message(
+        embed=discord.Embed(
+            description=t("self_remove.removed", lang,
+                          layer=format_layer_short(removed),
+                          remaining=remaining_uses),
+            color=discord.Color.green()),
+        view=None,
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # EVENT EDIT DIALOG (DM)
 # ═══════════════════════════════════════════════════════════════════════════
 #
@@ -2799,6 +3070,7 @@ _EDIT_PROPERTIES: list[dict] = [
     {"key": "blacklisted_units",         "label_key": "edit.prop.blacklisted_units",     "kind": "list",     "target": "config", "source": db.get_unique_unit_types},
     {"key": "max_suggestions_per_user",  "label_key": "edit.prop.max_per_user",          "kind": "int",      "target": "config", "min": 1,  "max": 10},
     {"key": "max_total_suggestions",     "label_key": "edit.prop.max_total",             "kind": "int",      "target": "config", "min": 1,  "max": 25},
+    {"key": "max_self_removals_per_user","label_key": "edit.prop.max_self_removals",     "kind": "int",      "target": "config", "min": 0,  "max": 10},
     {"key": "history_lookback_events",   "label_key": "edit.prop.history_lookback",      "kind": "int",      "target": "config", "min": 0,  "max": 50},
     {"key": "allowed_sources",           "label_key": "edit.prop.allowed_sources",       "kind": "list",     "target": "event",  "source": db.get_unique_sources},
     {"key": "voting_duration_hours",     "label_key": "edit.prop.voting_duration",       "kind": "vote_duration", "target": "event"},
@@ -2806,39 +3078,11 @@ _EDIT_PROPERTIES: list[dict] = [
     {"key": "allow_multiple_votes",      "label_key": "edit.prop.allow_multiple_votes",  "kind": "bool",     "target": "event"},
     {"key": "suggestion_duration_seconds", "label_key": "edit.prop.suggestion_duration", "kind": "duration", "target": "event"},
     {"key": "suggestion_start_time",     "label_key": "edit.prop.suggestion_start_time", "kind": "datetime", "target": "event"},
-    # Read-only entry — clicking it opens a redirect to the gate slash commands,
-    # which must run in a guild context (Discord auto-populated MentionableSelect
-    # menus do not work inside DMs).
-    {"key": "_event_gate",               "label_key": "edit.prop.gate",                  "kind": "external", "target": "event"},
 ]
 
 
 def _find_edit_property(key: str) -> Optional[dict]:
     return next((p for p in _EDIT_PROPERTIES if p["key"] == key), None)
-
-
-def _format_gate_display(event: dict, guild_id: int, lang: str) -> str:
-    """Render `allowed_role_ids` + `allowed_user_ids` as resolved mentions.
-
-    Falls back to raw `<@&id>` / `<@id>` strings when the bot's cache hasn't
-    seen the guild yet — Discord still renders those as proper mentions, just
-    without our pre-resolved label, and `allowed_mentions=none()` on the DM
-    keeps them from pinging anyone.
-    """
-    role_ids = list(event.get("allowed_role_ids") or [])
-    user_ids = list(event.get("allowed_user_ids") or [])
-    if not role_ids and not user_ids:
-        return "—"
-
-    guild = bot.get_guild(guild_id)
-    parts: list[str] = []
-    for rid in role_ids:
-        role = guild.get_role(rid) if guild else None
-        parts.append(role.mention if role else f"<@&{rid}>")
-    for uid in user_ids:
-        member = guild.get_member(uid) if guild else None
-        parts.append(member.mention if member else f"<@{uid}>")
-    return ", ".join(parts)
 
 
 def _build_edit_main_embed(event: dict, db_id: int, guild_id: int, lang: str,
@@ -2850,14 +3094,6 @@ def _build_edit_main_embed(event: dict, db_id: int, guild_id: int, lang: str,
         color=discord.Color.blurple(),
     )
     for prop in _EDIT_PROPERTIES:
-        if prop["kind"] == "external" and prop["key"] == "_event_gate":
-            display = _format_gate_display(event, guild_id, lang)
-            embed.add_field(
-                name=t(prop["label_key"], lang),
-                value=display if display == "—" else display[:1024],
-                inline=True,
-            )
-            continue
         value = _read_event_property(event, prop["key"], prop["target"])
         formatted = _format_property_value(value, prop["kind"])
         embed.add_field(
@@ -3187,14 +3423,6 @@ async def _show_property_editor(interaction: discord.Interaction, user_id: int,
             and event.get("phase", "created") != "created"):
         await _bounce_to_main(interaction, user_id, db_id, guild_id, lang,
                               t("edit.locked_phase", lang))
-        return
-
-    if prop["kind"] == "external":
-        view = EditGateRedirectView(user_id, db_id, guild_id, lang,
-                                    record.get("channel_id"))
-        _set_active_view(user_id, view)
-        embed = _build_gate_redirect_embed(db_id, guild_id, record.get("channel_id"), lang)
-        await interaction.response.edit_message(embed=embed, view=view)
         return
 
     if prop["kind"] == "list":
@@ -3578,64 +3806,6 @@ class EditStringModal(ui.Modal):
         value = normalize_event_name(self.value_input.value)
         await _apply_edit(interaction, self.user_id, self.db_id, self.guild_id,
                           self.lang, self.prop, value, via_modal=True)
-
-
-def _build_gate_redirect_embed(db_id: int, guild_id: int,
-                               channel_id: Optional[int],
-                               lang: str) -> discord.Embed:
-    """Embed shown when the admin selects "Allowed roles/users" in the DM.
-
-    The actual editing has to happen in a guild context (Discord auto-populated
-    role/user selects don't work in DMs), so the embed points the admin back
-    at the event embed's Admin → Edit Allow-list button.
-    """
-    channel_mention = f"<#{channel_id}>" if channel_id else "the event channel"
-    body = t("edit.gate_redirect", lang, channel=channel_mention)
-    return discord.Embed(
-        title=t("edit.prop.gate", lang),
-        description=body,
-        color=discord.Color.blurple(),
-    )
-
-
-class EditGateRedirectView(ui.View):
-    """DM-side entry point for editing the role/user allow-list.
-
-    The view itself only carries navigation: a deep-link button to the event
-    channel and a Back button. The real picker lives behind the Admin panel's
-    "Edit Allow-list" button on the public event embed — see the explanation
-    in `_build_gate_redirect_embed`.
-    """
-
-    def __init__(self, user_id: int, db_id: int, guild_id: int, lang: str,
-                 channel_id: Optional[int]):
-        super().__init__(timeout=600)
-        self.user_id = user_id
-        self.db_id = db_id
-        self.guild_id = guild_id
-        self.lang = lang
-
-        if channel_id:
-            self.add_item(ui.Button(
-                label=t("edit.gate_redirect_button", lang),
-                style=discord.ButtonStyle.link,
-                url=f"https://discord.com/channels/{guild_id}/{channel_id}",
-                emoji="↗️",
-            ))
-
-        back = ui.Button(
-            label=t("general.cancel", lang),
-            style=discord.ButtonStyle.secondary, emoji="↩️",
-        )
-        back.callback = self._on_back
-        self.add_item(back)
-
-    async def _on_back(self, interaction: discord.Interaction):
-        await _refresh_main_view(interaction, self.user_id, self.db_id,
-                                 self.guild_id, self.lang)
-
-    async def on_timeout(self):
-        await _handle_edit_timeout(self, self.user_id)
 
 
 # ───────────────────────────────────────────────────────────────────────────
@@ -4505,7 +4675,7 @@ async def _finalize_event_creation(interaction: discord.Interaction, settings: d
     db_id = db.create_event(interaction.guild_id, interaction.channel_id, event_data)
 
     embed = build_event_embed(event_data, settings, db_id)
-    view = EventActionView(db_id, lang)
+    view = EventActionView(db_id, lang, event_data.get("phase", "created"))
     msg = await interaction.channel.send(embed=embed, view=view)
 
     # Save message ID
