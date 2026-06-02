@@ -1616,6 +1616,19 @@ async def handle_info(interaction: discord.Interaction, db_id: int):
         inline=False,
     )
 
+    # Show the player's remaining self-removal budget, but only when the
+    # "Remove Suggestion" feature is enabled for this event (limit > 0).
+    removal_limit = _self_removal_limit(event, settings or {})
+    if removal_limit > 0:
+        removals_used = _self_removals_used(event, interaction.user.id)
+        embed.add_field(
+            name=t("info.removals_label", lang),
+            value=t("info.removals_value", lang,
+                    remaining=max(0, removal_limit - removals_used),
+                    max=removal_limit),
+            inline=False,
+        )
+
     if user_suggestions:
         lines = [f"• {format_layer_short(s)}" for s in user_suggestions]
         embed.add_field(name="Your Suggestions", value="\n".join(lines), inline=False)
