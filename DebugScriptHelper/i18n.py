@@ -826,6 +826,10 @@ _STRINGS: dict[str, dict[str, str]] = {
         "de": "{remaining}/{max} verbleibend",
         "en": "{remaining}/{max} remaining",
     },
+    "info.recent_winners": {
+        "de": "Letzte Gewinner",
+        "en": "Recent Winners",
+    },
 
     # ── Event edit DM dialog ─────────────────────────────────────────────
     "edit.title": {

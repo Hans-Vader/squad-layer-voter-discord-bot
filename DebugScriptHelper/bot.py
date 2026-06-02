@@ -1661,6 +1661,15 @@ async def handle_info(interaction: discord.Interaction, db_id: int):
         lines = [f"• {format_layer_short(s)}" for s in user_suggestions]
         embed.add_field(name="Your Suggestions", value="\n".join(lines), inline=False)
 
+    # Recent winners for this channel — same source/formatting as /history,
+    # trimmed to a few entries since Info is a compact panel.
+    history = db.get_recent_history(interaction.guild_id, record["channel_id"], limit=3)
+    winners = [f"• {format_layer_short(h['winning_layer'])}"
+               for h in history if h.get("winning_layer")]
+    if winners:
+        embed.add_field(name=t("info.recent_winners", lang),
+                        value="\n".join(winners), inline=False)
+
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
