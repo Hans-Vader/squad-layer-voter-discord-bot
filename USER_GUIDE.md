@@ -11,7 +11,7 @@
    - **Step 2**: Select a game mode (e.g., AAS v1, RAAS v2, Invasion)
    - **Step 3**: Select Team 1 faction and unit type
    - **Step 4**: Select Team 2 faction and unit type
-   - **Step 5**: Confirm your suggestion
+   - **Step 5**: Confirm your suggestion — the preview includes an **🗺️ Open in SquadCalc** link to inspect the layer
 4. Your suggestion appears in the event embed
 
 ### Viewing Your Suggestions
@@ -20,6 +20,7 @@ Click the **"Info"** button on the event embed to see:
 - Current event phase
 - How many suggestions you've used
 - Your submitted suggestions
+- Recent winners in this channel (with the date each was decided)
 
 ### Removing Your Suggestion
 

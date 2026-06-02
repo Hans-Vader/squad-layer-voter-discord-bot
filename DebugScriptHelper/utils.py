@@ -560,6 +560,18 @@ def build_event_embed(event: dict, settings: dict, db_id: int,
                 inline=False,
             )
 
+            # Ready-to-copy Squad RCON command to set the winning layer. The
+            # string is built at vote completion (bot.build_admin_change_layer)
+            # and stored on the event; a fenced code block renders as a
+            # one-tap-copy block on mobile.
+            command = event.get("winning_layer_command")
+            if command:
+                embed.add_field(
+                    name=f"⚙️ {t('embed.admin_command_header', lang)}",
+                    value=f"```\n{command}\n```",
+                    inline=False,
+                )
+
     # Footer: when the supermod source is active, the legend takes the slot
     # so users can decode SPM/SU and GoingDark prefixes (the SquadCalc hint
     # is suppressed since SquadCalc has no supermod map data anyway).

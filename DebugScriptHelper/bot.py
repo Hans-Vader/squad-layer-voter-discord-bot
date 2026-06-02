@@ -680,6 +680,47 @@ def _extract_default_unit_type(default_unit: str, faction_id: Optional[str] = No
     return None
 
 
+def build_admin_change_layer(winner: Optional[dict]) -> Optional[str]:
+    """Build the Squad RCON ``AdminChangeLayer`` command for a winning suggestion.
+
+    Format: ``AdminChangeLayer <raw_name> <fac1>+<unit1> <fac2>+<unit2>``.
+
+    Faction tokens are taken verbatim from the suggestion — they already carry
+    the ``SU_`` prefix for supermod layers. A unit suffix is always emitted: a
+    specific pick is used as-is; a ``Default`` pick resolves to the faction's
+    real default loadout from the layer cache (per team, since Invasion layers
+    reuse a factionId across teams), falling back to ``CombinedArms``.
+
+    Returns None when there is no winner or no raw layer name to target.
+    """
+    if not winner:
+        return None
+    raw_name = winner.get("raw_name")
+    if not raw_name:
+        return None
+
+    source = winner.get("source") or ""
+    layer = db.get_layer_by_raw_name(raw_name, [source] if source else None)
+    factions = layer.get("factions", []) if layer else []
+
+    def team_token(faction: Optional[str], unit: Optional[str], team: int) -> Optional[str]:
+        if not faction:
+            return None
+        if unit and unit not in ("Default", "?"):
+            return f"{faction}+{unit}"
+        resolved = None
+        entry = get_faction_entry_for_team(factions, faction, team)
+        if entry:
+            resolved = _extract_default_unit_type(entry.get("defaultUnit", ""))
+        return f"{faction}+{resolved or 'CombinedArms'}"
+
+    t1 = team_token(winner.get("team1_faction"), winner.get("team1_unit"), 1)
+    t2 = team_token(winner.get("team2_faction"), winner.get("team2_unit"), 2)
+    if not t1 or not t2:
+        return None
+    return f"AdminChangeLayer {raw_name} {t1} {t2}"
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # PERSISTENT VIEW — Event embed buttons
 # ═══════════════════════════════════════════════════════════════════════════
@@ -2447,6 +2488,7 @@ async def admin_end_vote(interaction: discord.Interaction, db_id: int):
 
         event["phase"] = "completed"
         event["winning_layer"] = winner
+        event["winning_layer_command"] = build_admin_change_layer(winner)
         db.save_event(record["db_id"], event)
 
         # Only record events that actually produced a winner.
@@ -5486,6 +5528,7 @@ async def check_events_loop():
                                                 winner = await _resolve_poll_winner(channel, rec["event"])
                                                 rec["event"]["phase"] = "completed"
                                                 rec["event"]["winning_layer"] = winner
+                                                rec["event"]["winning_layer_command"] = build_admin_change_layer(winner)
                                                 db.save_event(rec["db_id"], rec["event"])
                                                 if winner:
                                                     db.save_voting_history(

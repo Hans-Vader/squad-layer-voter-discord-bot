@@ -412,6 +412,10 @@ _STRINGS: dict[str, dict[str, str]] = {
         "de": "Gewinner",
         "en": "Winner",
     },
+    "embed.admin_command_header": {
+        "de": "Layer setzen",
+        "en": "Set this layer",
+    },
     "embed.footer": {
         "de": "Klick auf die Karte --> 🗺 um SquadCalc zu öffnen",
         "en": "Click on the map --> 🗺 to open SquadCalc",
