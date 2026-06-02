@@ -2278,10 +2278,17 @@ async def handle_join_vote(interaction: discord.Interaction, db_id: int):
         await interaction.response.send_message(t("gate.thread_missing", lang), ephemeral=True)
         return
 
-    try:
-        await thread.add_user(interaction.user)
-    except discord.HTTPException as e:
-        logger.warning(f"Failed to add {interaction.user.id} to voting thread {thread_id}: {e}")
+    # Only gated events use a PRIVATE thread, where membership is required for
+    # access — add the user so late-joiners (who got the role after creation)
+    # can see it. Open events use a PUBLIC thread reachable via the link, so we
+    # skip add_user there: adding to a thread notifies the user, and we just
+    # want to point them at the voting, not ping them.
+    gated = bool(event.get("allowed_role_ids") or event.get("allowed_user_ids"))
+    if gated:
+        try:
+            await thread.add_user(interaction.user)
+        except discord.HTTPException as e:
+            logger.warning(f"Failed to add {interaction.user.id} to voting thread {thread_id}: {e}")
 
     await interaction.response.send_message(
         t("gate.joined", lang, thread=thread.mention), ephemeral=True)

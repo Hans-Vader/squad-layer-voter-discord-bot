@@ -477,8 +477,8 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "The voting thread could not be found.",
     },
     "gate.joined": {
-        "de": "Du wurdest zum Abstimmungs-Thread hinzugefügt: {thread}",
-        "en": "You've been added to the voting thread: {thread}",
+        "de": "🗳️ Zur Abstimmung geht es hier: {thread}",
+        "en": "🗳️ Head to the voting here: {thread}",
     },
 
     # ── Voting thread (private thread created at /start_vote) ─────────────
