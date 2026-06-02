@@ -4973,7 +4973,7 @@ class EventGateEditView(ui.View):
         )
 
 
-@bot.tree.command(name="update", description="Refresh the event embed (organizer only)")
+@bot.tree.command(name="update", description="Refresh all event embeds in this server (organizer only)")
 async def cmd_update(interaction: discord.Interaction):
     settings = await check_guild_configured(interaction)
     if not settings:
@@ -4983,12 +4983,16 @@ async def cmd_update(interaction: discord.Interaction):
 
     lang = settings.get("language", "en")
 
-    db_id = await _resolve_channel_event(interaction, lang)
-    if db_id is None:
+    db_ids = [ev["db_id"] for ev in db.get_all_active_events_global()
+              if ev["guild_id"] == interaction.guild_id]
+    if not db_ids:
+        await interaction.response.send_message(t("update.none", lang), ephemeral=True)
         return
 
-    await _update_event_embed(db_id)
-    await interaction.response.send_message(t("general.success", lang), ephemeral=True)
+    for db_id in db_ids:
+        await _update_event_embed(db_id)
+    await interaction.response.send_message(
+        t("update.refreshed", lang, count=len(db_ids)), ephemeral=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

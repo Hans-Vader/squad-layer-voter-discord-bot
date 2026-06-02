@@ -158,6 +158,14 @@ _STRINGS: dict[str, dict[str, str]] = {
         "de": "Mehrere aktive Events in diesem Kanal — bitte den Admin-Button auf dem jeweiligen Event-Embed verwenden.",
         "en": "Multiple active events in this channel — please use the Admin button on the specific event embed.",
     },
+    "update.refreshed": {
+        "de": "🔄 Aktualisiere {count} Event-Embed(s) in diesem Server.",
+        "en": "🔄 Refreshing {count} event embed(s) in this server.",
+    },
+    "update.none": {
+        "de": "Keine aktiven Events zum Aktualisieren in diesem Server.",
+        "en": "No active events to refresh in this server.",
+    },
     "event.select_sources_title": {
         "de": "Layer-Quellen auswählen",
         "en": "Select layer sources",
