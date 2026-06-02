@@ -62,6 +62,9 @@ DEFAULT_GUILD_SETTINGS = {
     "max_suggestions_per_user": 2,
     "max_total_suggestions": 25,
     "history_lookback_events": 3,
+    # How many times a user may remove their own suggestion per event. 0
+    # disables the user-facing "Remove Suggestion" button entirely.
+    "max_self_removals_per_user": 1,
     # Per-guild default of which layer sources are offered to users when
     # creating a suggestion event. Empty list = all configured sources allowed.
     "allowed_sources": [],
@@ -648,6 +651,7 @@ EVENT_CONFIG_KEYS: tuple[str, ...] = (
     "max_suggestions_per_user",
     "max_total_suggestions",
     "history_lookback_events",
+    "max_self_removals_per_user",
 )
 
 
@@ -695,6 +699,10 @@ def build_default_event(suggestion_start_time=None,
         "winning_layer": None,
         "allow_multiple_votes": False,
         "suggestions": [],
+        # Per-user count of how many of their own suggestions a user has
+        # removed via the "Remove Suggestion" button (str(user_id) -> int).
+        # Capped per event by config["max_self_removals_per_user"].
+        "user_removal_counts": {},
         # Empty list = all configured sources allowed for this event. Set by
         # the admin at /create_layer_suggestion time (defaults to the guild's
         # allowed_sources setting).

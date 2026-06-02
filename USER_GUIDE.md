@@ -21,6 +21,15 @@ Click the **"Info"** button on the event embed to see:
 - How many suggestions you've used
 - Your submitted suggestions
 
+### Removing Your Suggestion
+
+While suggestions are open, click the **"Remove Suggestion"** button on the event embed to take back one of your own picks:
+
+1. Pick the suggestion to remove from the dropdown (only your own are shown)
+2. Confirm
+
+Removing frees the slot, so you can suggest again (up to the per-user limit). There is a per-event cap on how many of your own suggestions you may remove — once you hit it, the button stops working for you. The organizer sets this cap (it can be `0` to disable removal entirely).
+
 ### Voting
 
 When the admin starts a vote, a Discord poll appears in the channel. Simply vote for your preferred layer.
@@ -96,7 +105,8 @@ Click the **"Admin"** button on the event embed for quick actions:
 - Select layers for voting
 - End voting
 - Delete the event
-- **Edit Event** — opens a DM dialog where you can rename the event (and tweak per-event config like blacklists, voting duration, allow-list). Pick **Event Name** from the dropdown; submit empty to revert to `Event #ID`.
+- **Edit Event** — opens a DM dialog where you can rename the event and tweak per-event config (blacklists, voting duration, max suggestions, **Max Self-Removals per User**, etc.). Pick **Event Name** from the dropdown; submit empty to revert to `Event #ID`. **Max Self-Removals per User** controls how many times each player may remove their own suggestion (`0` disables the player-facing **Remove Suggestion** button).
+- **Edit Allow-list** — set which roles/users may participate. This lives on the event embed's Admin panel (not in the Edit Event DM dialog), because Discord's role/user pickers don't work inside DMs.
 
 ### Settings
 

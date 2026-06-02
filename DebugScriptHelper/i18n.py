@@ -418,6 +418,10 @@ _STRINGS: dict[str, dict[str, str]] = {
         "de": "Layer vorschlagen",
         "en": "Suggest Layer",
     },
+    "button.remove_own": {
+        "de": "Vorschlag entfernen",
+        "en": "Remove Suggestion",
+    },
     "button.info": {
         "de": "Info",
         "en": "Info",
@@ -753,6 +757,48 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "Do you really want to remove **{user}**'s suggestion?\n{layer}",
     },
 
+    # ── User self-removal ────────────────────────────────────────────────
+    "self_remove.disabled": {
+        "de": "Das Entfernen eigener Vorschläge ist für dieses Event deaktiviert.",
+        "en": "Removing your own suggestions is disabled for this event.",
+    },
+    "self_remove.none": {
+        "de": "Du hast keine eigenen Vorschläge zum Entfernen.",
+        "en": "You have no suggestions of your own to remove.",
+    },
+    "self_remove.limit_reached": {
+        "de": "Du hast dein Limit zum Entfernen eigener Vorschläge ({max}) erreicht.",
+        "en": "You have reached your limit for removing your own suggestions ({max}).",
+    },
+    "self_remove.title": {
+        "de": "Eigenen Vorschlag entfernen",
+        "en": "Remove your suggestion",
+    },
+    "self_remove.prompt": {
+        "de": "Wähle einen deiner **{count}** Vorschläge zum Entfernen aus.",
+        "en": "Pick one of your **{count}** suggestions to remove.",
+    },
+    "self_remove.select": {
+        "de": "Zu entfernenden Vorschlag auswählen",
+        "en": "Select a suggestion to remove",
+    },
+    "self_remove.not_found": {
+        "de": "Vorschlag nicht gefunden (möglicherweise bereits entfernt).",
+        "en": "Suggestion not found (it may have already been removed).",
+    },
+    "self_remove.confirm_title": {
+        "de": "Eigenen Vorschlag entfernen?",
+        "en": "Remove your suggestion?",
+    },
+    "self_remove.confirm_prompt": {
+        "de": "Möchtest du diesen Vorschlag wirklich entfernen?\n{layer}",
+        "en": "Do you really want to remove this suggestion?\n{layer}",
+    },
+    "self_remove.removed": {
+        "de": "Vorschlag entfernt: {layer}\nVerbleibende Entfernungen: **{remaining}**",
+        "en": "Suggestion removed: {layer}\nRemovals remaining: **{remaining}**",
+    },
+
     # ── Event edit DM dialog ─────────────────────────────────────────────
     "edit.title": {
         "de": "Event-Konfiguration bearbeiten",
@@ -899,6 +945,10 @@ _STRINGS: dict[str, dict[str, str]] = {
     "edit.prop.max_total": {
         "de": "Max. Vorschläge insgesamt",
         "en": "Max Total Suggestions",
+    },
+    "edit.prop.max_self_removals": {
+        "de": "Max. Selbst-Entfernungen pro Nutzer",
+        "en": "Max Self-Removals per User",
     },
     "edit.prop.history_lookback": {
         "de": "History-Lookback (Events)",
