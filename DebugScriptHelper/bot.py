@@ -1664,8 +1664,17 @@ async def handle_info(interaction: discord.Interaction, db_id: int):
     # Recent winners for this channel — same source/formatting as /history,
     # trimmed to a few entries since Info is a compact panel.
     history = db.get_recent_history(interaction.guild_id, record["channel_id"], limit=3)
-    winners = [f"• {format_layer_short(h['winning_layer'])}"
-               for h in history if h.get("winning_layer")]
+    winners = []
+    for h in history:
+        winner = h.get("winning_layer")
+        if not winner:
+            continue
+        # completed_at is "YYYY-MM-DD HH:MM:SS" (or ISO) — keep the date part.
+        date = (h.get("completed_at") or "")[:10]
+        line = f"• {format_layer_short(winner)}"
+        if date:
+            line += f" — *{date}*"
+        winners.append(line)
     if winners:
         embed.add_field(name=t("info.recent_winners", lang),
                         value="\n".join(winners), inline=False)
