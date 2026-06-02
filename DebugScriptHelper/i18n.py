@@ -810,6 +810,14 @@ _STRINGS: dict[str, dict[str, str]] = {
         "de": "Vorschlag entfernt: {layer}\nVerbleibende Entfernungen: **{remaining}**",
         "en": "Suggestion removed: {layer}\nRemovals remaining: **{remaining}**",
     },
+    "info.removals_label": {
+        "de": "Eigene Entfernungen",
+        "en": "Self-Removals",
+    },
+    "info.removals_value": {
+        "de": "{remaining}/{max} verbleibend",
+        "en": "{remaining}/{max} remaining",
+    },
 
     # ── Event edit DM dialog ─────────────────────────────────────────────
     "edit.title": {
