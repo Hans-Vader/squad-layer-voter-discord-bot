@@ -274,6 +274,14 @@ _STRINGS: dict[str, dict[str, str]] = {
         "de": "Die Vorschlagsphase ist nicht geöffnet.",
         "en": "The suggestion phase is not open.",
     },
+    "phase.not_closed": {
+        "de": "Die Vorschlagsphase ist nicht geschlossen.",
+        "en": "The suggestion phase isn't closed.",
+    },
+    "phase.suggestions_reopened": {
+        "de": "Vorschlagsphase wieder geöffnet!",
+        "en": "Suggestion phase reopened!",
+    },
     "phase.invalid_duration": {
         "de": "Ungültige Dauer: `{value}`. Erwartet z.B. `60`, `2h`, `1d`.",
         "en": "Invalid duration: `{value}`. Expected e.g. `60`, `2h`, `1d`.",
@@ -695,6 +703,10 @@ _STRINGS: dict[str, dict[str, str]] = {
     "admin.select_for_vote": {
         "de": "Für Abstimmung auswählen",
         "en": "Select for Vote",
+    },
+    "admin.reopen_suggestions": {
+        "de": "Vorschläge erneut öffnen",
+        "en": "Reopen Suggestions",
     },
     "admin.start_vote": {
         "de": "Abstimmung starten",

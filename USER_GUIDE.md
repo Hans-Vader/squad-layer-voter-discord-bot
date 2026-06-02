@@ -82,6 +82,7 @@ Users click "Suggest Layer" and submit their picks.
 
 **Step 4: Close Suggestions**
 - Use `/close_suggestions` or Admin > "Close Suggestions"
+- Closed too early? Click Admin > "Reopen Suggestions" to accept picks again. It stays open until you close it again (no auto-close timer).
 
 **Step 5: Select Layers for Voting**
 - Use `/select_for_vote` or Admin > "Select for Vote"

@@ -1672,6 +1672,7 @@ class AdminPanelView(ui.View):
             self.add_item(AdminButton("close_suggestions", t("admin.close_suggestions", lang), discord.ButtonStyle.secondary, "⏹️"))
         elif phase == "suggestions_closed":
             self.add_item(AdminButton("select_for_vote", t("admin.select_for_vote", lang), discord.ButtonStyle.primary, "🗳️"))
+            self.add_item(AdminButton("reopen_suggestions", t("admin.reopen_suggestions", lang), discord.ButtonStyle.secondary, "🔄"))
         elif phase == "voting":
             self.add_item(AdminButton("end_vote", t("admin.end_vote", lang), discord.ButtonStyle.danger, "🏁"))
 
@@ -1714,6 +1715,8 @@ class AdminButton(ui.Button):
             await admin_open_suggestions(interaction, db_id)
         elif self.action == "close_suggestions":
             await admin_close_suggestions(interaction, db_id)
+        elif self.action == "reopen_suggestions":
+            await admin_reopen_suggestions(interaction, db_id)
         elif self.action == "select_for_vote":
             await admin_select_for_vote(interaction, db_id)
         elif self.action == "end_vote":
@@ -1866,6 +1869,44 @@ async def _do_close_suggestions(interaction: discord.Interaction, db_id: int):
         guild_id=interaction.guild_id,
         lang=lang,
     )
+
+
+async def admin_reopen_suggestions(interaction: discord.Interaction, db_id: int):
+    """Reopen a closed suggestion phase: suggestions_closed → suggestions_open.
+
+    Mirror of admin_open_suggestions but for the inverse transition. No
+    auto-close timer is set (suggestion_end_time = None) so the phase stays
+    open until the organizer closes it again — restoring a stale past
+    end_time would make the scheduler close it again immediately.
+    """
+    lock = _get_guild_lock(interaction.guild_id)
+    async with lock:
+        record = db.get_event_by_db_id(interaction.guild_id, db_id)
+        if not record:
+            return
+        event = record["event"]
+        settings = db.get_guild_settings(interaction.guild_id)
+        lang = settings.get("language", "en") if settings else "en"
+
+        if event.get("phase") != "suggestions_closed":
+            await interaction.response.send_message(
+                embed=discord.Embed(description=t("phase.not_closed", lang),
+                                    color=discord.Color.orange()),
+                ephemeral=True,
+            )
+            return
+
+        event["phase"] = "suggestions_open"
+        event["suggestion_end_time"] = None
+        db.save_event(record["db_id"], event)
+
+    ack_text = t("phase.suggestions_reopened", lang)
+    await interaction.response.send_message(
+        embed=discord.Embed(description=f"✅ {ack_text}", color=discord.Color.green()),
+        ephemeral=True,
+    )
+    await _update_event_embed(db_id)
+    await send_event_log(event, db_id, ack_text, guild_id=interaction.guild_id, lang=lang)
 
 
 async def admin_select_for_vote(interaction: discord.Interaction, db_id: int):
