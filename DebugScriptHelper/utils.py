@@ -478,8 +478,13 @@ def build_event_embed(event: dict, settings: dict, db_id: int,
     # Suggestions
     suggestions = event.get("suggestions", [])
 
+    # Per-event config wins over the guild default; fall back to 25
+    # (DEFAULT_GUILD_SETTINGS["max_total_suggestions"]).
+    max_total = (event.get("config") or {}).get(
+        "max_total_suggestions", settings.get("max_total_suggestions", 25))
+
     if phase in ("suggestions_open", "suggestions_closed", "voting"):
-        header = f"📋 {t('embed.suggestions_header', lang)} ({len(suggestions)})"
+        header = f"📋 {t('embed.suggestions_header', lang)} ({len(suggestions)}/{max_total})"
         if suggestions:
             show_counts = phase == "voting" and vote_counts is not None
 
@@ -519,7 +524,7 @@ def build_event_embed(event: dict, settings: dict, db_id: int,
                     embed.add_field(name=name, value=field_value, inline=False)
         else:
             embed.add_field(
-                name=f"📋 {t('embed.suggestions_header', lang)}",
+                name=f"📋 {t('embed.suggestions_header', lang)} ({len(suggestions)}/{max_total})",
                 value=t("embed.no_suggestions", lang),
                 inline=False,
             )
