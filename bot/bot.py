@@ -5097,9 +5097,14 @@ async def cmd_update(interaction: discord.Interaction):
         await interaction.response.send_message(t("update.none", lang), ephemeral=True)
         return
 
+    # The refresh itself is fire-and-forget (each _update_event_embed just
+    # schedules a debounced background task), but defer up front so the ack
+    # still lands inside Discord's 3s window as the global active-event scan
+    # and per-event scheduling grow; reply via followup once they're queued.
+    await interaction.response.defer(ephemeral=True)
     for db_id in db_ids:
         await _update_event_embed(db_id)
-    await interaction.response.send_message(
+    await interaction.followup.send(
         t("update.refreshed", lang, count=len(db_ids)), ephemeral=True)
 
 
