@@ -33,6 +33,7 @@ from utils import (
     normalize_event_name,
     EVENT_NAME_MAX_LENGTH,
     display_name,
+    truncate_thread_name,
 )
 
 logger = logging.getLogger("layer_vote")
@@ -2295,8 +2296,9 @@ async def _create_voting_thread(channel: discord.TextChannel, event: dict,
     gated = bool(role_ids or user_ids)
 
     kwargs = dict(
-        name=t("thread.voting_name", lang,
-               event_label=display_name(event, db_id, lang=lang)),
+        name=truncate_thread_name(
+            t("thread.voting_name", lang,
+              event_label=display_name(event, db_id, lang=lang))),
         auto_archive_duration=10080,  # 7 days
     )
     if gated:

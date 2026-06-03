@@ -52,6 +52,28 @@ def display_name(event: dict, db_id: int, *, lang: str = "en") -> str:
     return t("event.fallback_name", lang, db_id=db_id)
 
 
+# Discord caps thread (and channel) names at 100 characters; create_thread
+# raises HTTPException if exceeded. Since a composed name like
+# "Voting — {event_label}" can run up to ~109 chars (event names alone go to
+# EVENT_NAME_MAX_LENGTH = 100), truncate defensively so a long event title can
+# never break thread creation — which, for a gated event, would otherwise fall
+# back to posting the poll in the open channel with no allow-list enforcement.
+DISCORD_THREAD_NAME_MAX_LENGTH = 100
+
+
+def truncate_thread_name(name: str,
+                         *, max_length: int = DISCORD_THREAD_NAME_MAX_LENGTH) -> str:
+    """Truncate a composed thread name to Discord's length limit.
+
+    Appends an ellipsis when truncation occurs so the name reads as visibly
+    shortened rather than abruptly cut. Returns `name` unchanged when it
+    already fits. The result never exceeds `max_length`.
+    """
+    if len(name) <= max_length:
+        return name
+    return name[:max_length - 1].rstrip() + "…"
+
+
 # Layer source whose factionIds and map names map cleanly to SquadCalc params.
 # Layers from any other source still get a clickable map icon, but the URL
 # points at SquadCalc's homepage (since the params would 404) and the
