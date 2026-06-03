@@ -2277,14 +2277,28 @@ async def _resolve_poll_target(channel: discord.abc.Messageable, event: dict) ->
     return thread or channel
 
 
+async def _fetch_event_message(channel: discord.abc.Messageable,
+                               event: dict) -> Optional[discord.Message]:
+    """Best-effort fetch of an event's embed message from its channel."""
+    msg_id = event.get("event_message_id")
+    if not msg_id:
+        return None
+    try:
+        return await channel.fetch_message(msg_id)
+    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+        return None
+
+
 async def _create_voting_thread(channel: discord.TextChannel, event: dict,
                                  db_id: int, lang: str) -> Optional[discord.Thread]:
     """Create the voting thread for an event.
 
-    Gated events (with an allow-list) get a PRIVATE thread whose members are
-    pre-populated via role pings + explicit adds. Open events (no allow-list)
-    get a PUBLIC thread so the poll lives in its own thread too, consistent
-    with gated events — anyone in the channel can open it and vote.
+    Open events (no allow-list) get a PUBLIC thread attached to the event's
+    embed message, so it shows up under the embed; anyone in the channel can
+    open it and vote. Gated events (with an allow-list) get a standalone
+    PRIVATE thread whose members are pre-populated via role pings + explicit
+    adds — Discord can't attach a private thread to a message, and the privacy
+    is what gates the poll, so those stay unbound.
 
     Returns the thread, or None if thread creation failed (caller then falls
     back to posting the poll directly in `channel`). Errors during the
@@ -2295,20 +2309,37 @@ async def _create_voting_thread(channel: discord.TextChannel, event: dict,
     user_ids = event.get("allowed_user_ids") or []
     gated = bool(role_ids or user_ids)
 
-    kwargs = dict(
-        name=truncate_thread_name(
-            t("thread.voting_name", lang,
-              event_label=display_name(event, db_id, lang=lang))),
-        auto_archive_duration=10080,  # 7 days
-    )
-    if gated:
-        kwargs["type"] = discord.ChannelType.private_thread
-        kwargs["invitable"] = False  # only the bot/mods can add others
-    else:
-        kwargs["type"] = discord.ChannelType.public_thread
+    thread_name = truncate_thread_name(
+        t("thread.voting_name", lang,
+          event_label=display_name(event, db_id, lang=lang)))
 
     try:
-        thread = await channel.create_thread(**kwargs)
+        if gated:
+            # Private threads can't attach to a message (Discord limitation);
+            # privacy is what gates the poll, so keep them standalone.
+            thread = await channel.create_thread(
+                name=thread_name,
+                auto_archive_duration=10080,  # 7 days
+                type=discord.ChannelType.private_thread,
+                invitable=False,  # only the bot/mods can add others
+            )
+        else:
+            # Open event: attach the public voting thread to the embed message
+            # so it shows up under the embed.
+            parent = await _fetch_event_message(channel, event)
+            if parent is not None:
+                thread = parent.thread or await parent.create_thread(
+                    name=thread_name,
+                    auto_archive_duration=10080,  # 7 days
+                )
+            else:
+                # Embed message unreachable — fall back to a standalone public
+                # thread (legacy behavior) so voting still proceeds.
+                thread = await channel.create_thread(
+                    name=thread_name,
+                    auto_archive_duration=10080,  # 7 days
+                    type=discord.ChannelType.public_thread,
+                )
     except discord.HTTPException as e:
         logger.error(f"Failed to create voting thread in #{channel.id}: {e}")
         return None
