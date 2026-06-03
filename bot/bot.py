@@ -5031,6 +5031,7 @@ class EventGateEditView(AutoDisableView):
 
         await interaction.response.edit_message(
             content=content, embed=None, view=None,
+            allowed_mentions=discord.AllowedMentions.none(),
         )
         await _update_event_embed(self.db_id)
         await send_event_log(
@@ -5567,10 +5568,12 @@ async def check_events_loop():
                                         )
                                     db.save_event(rec["db_id"], rec["event"])
                             await _update_event_embed(db_id)
+                            lang = db.get_guild_language(guild_id)
                             await send_event_log(
                                 event, db_id,
                                 f"Suggestion phase auto-opened in <#{channel_id}>",
                                 guild_id=guild_id,
+                                lang=lang,
                             )
                         elif seconds_until < EVENT_CRITICAL_WINDOW:
                             sleep_time = EVENT_CHECK_INTERVAL_FAST
@@ -5624,10 +5627,12 @@ async def check_events_loop():
                                                     )
                                         await _update_event_embed(db_id)
                                         winner_str = format_layer_short(winner) if winner else "None"
+                                        lang = db.get_guild_language(guild_id)
                                         await send_event_log(
                                             event, db_id,
                                             f"Poll ended in <#{channel_id}>. Winner: {winner_str}",
                                             guild_id=guild_id,
+                                            lang=lang,
                                         )
                         except discord.NotFound:
                             pass
