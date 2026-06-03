@@ -842,6 +842,10 @@ _STRINGS: dict[str, dict[str, str]] = {
         "de": "Letzte Gewinner",
         "en": "Recent Winners",
     },
+    "info.recent_winners_more": {
+        "de": "… und {count} weitere",
+        "en": "… and {count} more",
+    },
 
     # ── Event edit DM dialog ─────────────────────────────────────────────
     "edit.title": {

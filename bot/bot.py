@@ -28,7 +28,7 @@ from utils import (
     has_organizer_role, is_guild_admin,
     check_role_gate,
     format_layer_short, format_layer_poll_option, suggestion_matches,
-    build_event_embed, build_squadcalc_url,
+    build_event_embed, build_squadcalc_url, fit_lines_to_field,
     set_log_channel, send_to_log_channel,
     normalize_event_name,
     EVENT_NAME_MAX_LENGTH,
@@ -1675,7 +1675,7 @@ async def handle_suggest_submit(interaction: discord.Interaction, lang: str):
                 return
 
         # Check history blocking
-        lookback = event_settings.get("history_lookback_events", 3)
+        lookback = event_settings.get("history_lookback_events", 12)
         if lookback > 0:
             blocked = db.get_blocked_suggestions(state.guild_id, state.channel_id, lookback)
             for bl in blocked:
@@ -1761,9 +1761,12 @@ async def handle_info(interaction: discord.Interaction, db_id: int):
         lines = [f"• {format_layer_short(s)}" for s in user_suggestions]
         embed.add_field(name="Your Suggestions", value="\n".join(lines), inline=False)
 
-    # Recent winners for this channel — same source/formatting as /history,
-    # trimmed to a few entries since Info is a compact panel.
-    history = db.get_recent_history(interaction.guild_id, record["channel_id"], limit=3)
+    # Recent winners for this channel — same source/formatting as /history.
+    # Show as many as the re-suggestion blocking window (history_lookback_events),
+    # so the panel reflects exactly which winners are still blocked from being
+    # re-suggested. lookback 0 (blocking disabled) falls back to the default 12.
+    lookback = event_settings.get("history_lookback_events", 12) or 12
+    history = db.get_recent_history(interaction.guild_id, record["channel_id"], limit=lookback)
     winners = []
     for h in history:
         winner = h.get("winning_layer")
@@ -1776,8 +1779,14 @@ async def handle_info(interaction: discord.Interaction, db_id: int):
             line += f" — *{date}*"
         winners.append(line)
     if winners:
+        # A field value is capped at 1024 chars; with lookback up to 50 the list
+        # can overflow, so trim to fit and note how many were dropped.
+        value = fit_lines_to_field(
+            winners,
+            lambda dropped: t("info.recent_winners_more", lang, count=dropped),
+        )
         embed.add_field(name=t("info.recent_winners", lang),
-                        value="\n".join(winners), inline=False)
+                        value=value, inline=False)
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
 

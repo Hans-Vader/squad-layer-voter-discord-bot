@@ -7,7 +7,7 @@ Permission checks, embed builders, layer formatting helpers.
 
 import logging
 from datetime import datetime
-from typing import Optional
+from typing import Callable, Optional
 from urllib.parse import urlencode
 
 import discord
@@ -428,6 +428,28 @@ def _split_entries_evenly(entries: list[str], max_len: int = 1024) -> list[str]:
         if ok:
             return chunks
     return list(entries)
+
+
+def fit_lines_to_field(lines: list[str],
+                       more_label: Callable[[int], str],
+                       max_len: int = 1024) -> str:
+    """Join ``lines`` with newlines so the result fits a Discord embed field.
+
+    A field value is capped at ``max_len`` (1024) characters. If every line
+    fits, returns them joined as-is. Otherwise keeps the longest leading run of
+    lines that still fits alongside a trailing summary produced by
+    ``more_label(dropped)`` — a callable given the number of omitted lines that
+    returns the localized "… and N more" string.
+    """
+    joined = "\n".join(lines)
+    if len(joined) <= max_len:
+        return joined
+    for keep in range(len(lines) - 1, -1, -1):
+        candidate = "\n".join(lines[:keep] + [more_label(len(lines) - keep)])
+        if len(candidate) <= max_len:
+            return candidate
+    # Pathological: even the summary line alone exceeds max_len.
+    return more_label(len(lines))[:max_len]
 
 
 def _embed_total_chars(embed: Embed) -> int:
