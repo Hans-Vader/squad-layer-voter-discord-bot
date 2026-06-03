@@ -722,6 +722,55 @@ def build_admin_change_layer(winner: Optional[dict]) -> Optional[str]:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# BASE VIEW — grey out components when a dialog goes stale
+# ═══════════════════════════════════════════════════════════════════════════
+
+class AutoDisableView(ui.View):
+    """A view whose components grey out when it times out.
+
+    `_origin` is the interaction that last rendered this view. On timeout we
+    edit that interaction's original (ephemeral) response to push the now
+    disabled components, so the user sees the dialog expired instead of getting
+    a silent "This interaction failed" on click.
+
+    Multi-step flows reuse one ephemeral message, leaving behind older views
+    whose timers keep running. A superseded view must be retired with `.stop()`
+    by the callback that navigates away from it (advance to a new step, or
+    finalize to `view=None`) so its timer can't later clobber the live message.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._origin: Optional[discord.Interaction] = None
+
+    async def on_timeout(self) -> None:
+        for child in self.children:
+            if hasattr(child, "disabled"):
+                child.disabled = True
+        if self._origin is None:
+            return
+        try:
+            await self._origin.edit_original_response(view=self)
+        except discord.HTTPException:
+            pass
+
+
+def _bind(view: ui.View, interaction: discord.Interaction) -> ui.View:
+    """Bind a view to the interaction that renders it so it can grey itself out
+    on timeout. Returns the view so it can wrap a constructor inline:
+    ``view = _bind(SomeView(...), interaction)``.
+
+    Binding is synchronous (no extra HTTP on the hot path); the only timeout
+    cost is one edit when a screen actually expires. Callbacks that navigate
+    away from their own view are responsible for retiring it via `.stop()` so a
+    superseded timer can't later clobber the live message.
+    """
+    if isinstance(view, AutoDisableView):
+        view._origin = interaction
+    return view
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # PERSISTENT VIEW — Event embed buttons
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -1009,7 +1058,7 @@ async def handle_suggest_start(interaction: discord.Interaction, db_id: int):
     if len(sources) > 1:
         # Show source picker first; the map step runs after the user picks one.
         options = [discord.SelectOption(label=s, value=s) for s in sources[:25]]
-        view = SourceSelectView(options, lang)
+        view = _bind(SourceSelectView(options, lang), interaction)
         embed = discord.Embed(
             title=t("suggest.phase_title", lang),
             description=t("suggest.select_source", lang),
@@ -1094,7 +1143,7 @@ async def _suggest_show_map_step(interaction: discord.Interaction, state: Sugges
         return
 
     sizes = db.get_map_sizes(allowed_sources=source_filter)
-    view = _build_map_picker_view(maps, lang, sizes)
+    view = _bind(_build_map_picker_view(maps, lang, sizes), interaction)
     desc = t("suggest.select_map", lang)
     if state.source:
         desc = f"**{t('suggest.source_label', lang)}:** {state.source}\n{desc}"
@@ -1109,7 +1158,7 @@ async def _suggest_show_map_step(interaction: discord.Interaction, state: Sugges
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
-class SourceSelectView(ui.View):
+class SourceSelectView(AutoDisableView):
     def __init__(self, options: list[discord.SelectOption], lang: str):
         super().__init__(timeout=600)
         self.add_item(SourceSelect(options, lang))
@@ -1127,13 +1176,14 @@ class SourceSelect(ui.Select):
             await interaction.response.send_message(t("general.timeout", self.lang), ephemeral=True)
             return
 
+        self.view.stop()  # retire this step so its timer can't clobber later steps
         state.source = self.values[0]
         settings = db.get_guild_settings(state.guild_id)
         lang = settings.get("language", "en") if settings else "en"
         await _suggest_show_map_step(interaction, state, settings or {}, lang, edit=True)
 
 
-class MapSelectView(ui.View):
+class MapSelectView(AutoDisableView):
     def __init__(self, options: list[discord.SelectOption], lang: str,
                  placeholder: Optional[str] = None):
         super().__init__(timeout=600)
@@ -1142,7 +1192,7 @@ class MapSelectView(ui.View):
         self.add_item(select)
 
 
-class GroupedMapSelectView(ui.View):
+class GroupedMapSelectView(AutoDisableView):
     """Map picker with one MapSelect per size bucket. Used when the map list
     exceeds Discord's 25-option-per-Select cap (typical for the supermod source,
     which has 43+ playable maps).
@@ -1180,6 +1230,7 @@ class MapSelect(ui.Select):
             await interaction.response.send_message(t("general.timeout", self.lang), ephemeral=True)
             return
 
+        self.view.stop()  # retire this step so its timer can't clobber later steps
         state.map_name = self.values[0]
         settings = db.get_guild_settings(state.guild_id)
         lang = settings.get("language", "en") if settings else "en"
@@ -1209,7 +1260,7 @@ class MapSelect(ui.Select):
             for m in modes[:25]
         ]
 
-        view = ModeSelectView(options, lang)
+        view = _bind(ModeSelectView(options, lang), interaction)
         embed = discord.Embed(
             title=t("suggest.phase_title", lang),
             description=f"**Map:** {state.map_name}\n{t('suggest.select_mode', lang)}",
@@ -1218,7 +1269,7 @@ class MapSelect(ui.Select):
         await interaction.response.edit_message(embed=embed, view=view)
 
 
-class ModeSelectView(ui.View):
+class ModeSelectView(AutoDisableView):
     def __init__(self, options: list[discord.SelectOption], lang: str):
         super().__init__(timeout=600)
         self.add_item(ModeSelect(options, lang))
@@ -1236,6 +1287,7 @@ class ModeSelect(ui.Select):
             await interaction.response.send_message(t("general.timeout", self.lang), ephemeral=True)
             return
 
+        self.view.stop()  # retire this step so its timer can't clobber later steps
         raw_name = self.values[0]
         source_filter = [state.source] if state.source else None
         layer_data = db.get_layer_by_raw_name(raw_name, allowed_sources=source_filter)
@@ -1269,7 +1321,7 @@ class ModeSelect(ui.Select):
         options = _faction_select_options(factions)
 
         mode_str = f"{state.gamemode} {state.layer_version}".strip() if state.layer_version else state.gamemode
-        view = Team1FactionSelectView(options, lang)
+        view = _bind(Team1FactionSelectView(options, lang), interaction)
         embed = discord.Embed(
             title=t("suggest.phase_title", lang),
             description=(
@@ -1282,7 +1334,7 @@ class ModeSelect(ui.Select):
         await interaction.response.edit_message(embed=embed, view=view)
 
 
-class Team1FactionSelectView(ui.View):
+class Team1FactionSelectView(AutoDisableView):
     def __init__(self, options: list[discord.SelectOption], lang: str):
         super().__init__(timeout=600)
         self.add_item(Team1FactionSelect(options, lang))
@@ -1300,6 +1352,7 @@ class Team1FactionSelect(ui.Select):
             await interaction.response.send_message(t("general.timeout", self.lang), ephemeral=True)
             return
 
+        self.view.stop()  # retire this step so its timer can't clobber later steps
         state.team1_faction = self.values[0]
         settings = db.get_guild_settings(state.guild_id)
         lang = settings.get("language", "en") if settings else "en"
@@ -1322,7 +1375,7 @@ class Team1FactionSelect(ui.Select):
         ]
 
         mode_str = f"{state.gamemode} {state.layer_version}".strip() if state.layer_version else state.gamemode
-        view = Team1UnitSelectView(options, lang)
+        view = _bind(Team1UnitSelectView(options, lang), interaction)
         embed = discord.Embed(
             title=t("suggest.phase_title", lang),
             description=(
@@ -1336,7 +1389,7 @@ class Team1FactionSelect(ui.Select):
         await interaction.response.edit_message(embed=embed, view=view)
 
 
-class Team1UnitSelectView(ui.View):
+class Team1UnitSelectView(AutoDisableView):
     def __init__(self, options: list[discord.SelectOption], lang: str):
         super().__init__(timeout=600)
         self.add_item(Team1UnitSelect(options, lang))
@@ -1354,6 +1407,7 @@ class Team1UnitSelect(ui.Select):
             await interaction.response.send_message(t("general.timeout", self.lang), ephemeral=True)
             return
 
+        self.view.stop()  # retire this step so its timer can't clobber later steps
         state.team1_unit = self.values[0]
         settings = db.get_guild_settings(state.guild_id)
         await _show_team2_faction_select(interaction, state, settings)
@@ -1381,7 +1435,7 @@ async def _show_team2_faction_select(interaction: discord.Interaction,
     options = _faction_select_options(factions)
 
     mode_str = f"{state.gamemode} {state.layer_version}".strip() if state.layer_version else state.gamemode
-    view = Team2FactionSelectView(options, lang)
+    view = _bind(Team2FactionSelectView(options, lang), interaction)
     embed = discord.Embed(
         title=t("suggest.phase_title", lang),
         description=(
@@ -1395,7 +1449,7 @@ async def _show_team2_faction_select(interaction: discord.Interaction,
     await interaction.response.edit_message(embed=embed, view=view)
 
 
-class Team2FactionSelectView(ui.View):
+class Team2FactionSelectView(AutoDisableView):
     def __init__(self, options: list[discord.SelectOption], lang: str):
         super().__init__(timeout=600)
         self.add_item(Team2FactionSelect(options, lang))
@@ -1413,6 +1467,7 @@ class Team2FactionSelect(ui.Select):
             await interaction.response.send_message(t("general.timeout", self.lang), ephemeral=True)
             return
 
+        self.view.stop()  # retire this step so its timer can't clobber later steps
         state.team2_faction = self.values[0]
         settings = db.get_guild_settings(state.guild_id)
         lang = settings.get("language", "en") if settings else "en"
@@ -1434,7 +1489,7 @@ class Team2FactionSelect(ui.Select):
         ]
 
         mode_str = f"{state.gamemode} {state.layer_version}".strip() if state.layer_version else state.gamemode
-        view = Team2UnitSelectView(options, lang)
+        view = _bind(Team2UnitSelectView(options, lang), interaction)
         embed = discord.Embed(
             title=t("suggest.phase_title", lang),
             description=(
@@ -1449,7 +1504,7 @@ class Team2FactionSelect(ui.Select):
         await interaction.response.edit_message(embed=embed, view=view)
 
 
-class Team2UnitSelectView(ui.View):
+class Team2UnitSelectView(AutoDisableView):
     def __init__(self, options: list[discord.SelectOption], lang: str):
         super().__init__(timeout=600)
         self.add_item(Team2UnitSelect(options, lang))
@@ -1467,6 +1522,7 @@ class Team2UnitSelect(ui.Select):
             await interaction.response.send_message(t("general.timeout", self.lang), ephemeral=True)
             return
 
+        self.view.stop()  # retire this step so its timer can't clobber the confirm screen
         state.team2_unit = self.values[0]
         settings = db.get_guild_settings(state.guild_id)
         await _show_confirm(interaction, state, settings)
@@ -1504,7 +1560,7 @@ async def _show_confirm(interaction: discord.Interaction, state: SuggestState, s
         "team2_unit_prefix": _resolve_unit_prefix(state.layer_data, state.team2_faction, 2),
     }
 
-    view = ConfirmSuggestionView(lang)
+    view = _bind(ConfirmSuggestionView(lang), interaction)
     embed = discord.Embed(
         title=t("suggest.confirm_title", lang),
         description=(
@@ -1519,17 +1575,19 @@ async def _show_confirm(interaction: discord.Interaction, state: SuggestState, s
     await interaction.response.edit_message(embed=embed, view=view)
 
 
-class ConfirmSuggestionView(ui.View):
+class ConfirmSuggestionView(AutoDisableView):
     def __init__(self, lang: str):
         super().__init__(timeout=600)
         self.lang = lang
 
     @ui.button(label="Submit", style=discord.ButtonStyle.success, emoji="✅")
     async def submit_button(self, interaction: discord.Interaction, button: ui.Button):
+        self.stop()  # terminal: retire so the timer can't grey out the result message
         await handle_suggest_submit(interaction, self.lang)
 
     @ui.button(label="Cancel", style=discord.ButtonStyle.secondary, emoji="❌")
     async def cancel_button(self, interaction: discord.Interaction, button: ui.Button):
+        self.stop()  # terminal: retire so the timer can't grey out the result message
         _suggest_sessions.pop(interaction.user.id, None)
         await interaction.response.edit_message(
             embed=discord.Embed(description=t("general.cancelled", self.lang), color=discord.Color.greyple()),
@@ -1756,11 +1814,11 @@ async def handle_admin_panel(interaction: discord.Interaction, db_id: int):
     )
 
     suggestion_count = len(event.get("suggestions", []))
-    view = AdminPanelView(phase, lang, record["db_id"], suggestion_count)
+    view = _bind(AdminPanelView(phase, lang, record["db_id"], suggestion_count), interaction)
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
-class AdminPanelView(ui.View):
+class AdminPanelView(AutoDisableView):
     def __init__(self, phase: str, lang: str, db_id: int, suggestion_count: int = 0):
         super().__init__(timeout=120)
         self.lang = lang
@@ -1830,8 +1888,15 @@ class AdminButton(ui.Button):
         elif self.action == "delete_event":
             await admin_delete_event(interaction, db_id)
 
+        # Every action except the two that post a separate ephemeral ack
+        # replaces the panel message with a sub-dialog or result, so retire the
+        # panel's timer — otherwise its 120s timeout would later grey out
+        # whatever now occupies that message.
+        if self.action not in ("open_suggestions", "reopen_suggestions"):
+            self.view.stop()
 
-class ConfirmActionView(ui.View):
+
+class ConfirmActionView(AutoDisableView):
     """Generic confirmation dialog with Confirm and Cancel buttons.
 
     The confirm_callback is invoked with (interaction, db_id) so admin flows
@@ -1849,10 +1914,12 @@ class ConfirmActionView(ui.View):
 
     @ui.button(label="Confirm", style=discord.ButtonStyle.danger, emoji="✅")
     async def confirm_button(self, interaction: discord.Interaction, button: ui.Button):
+        self.stop()  # terminal: the callback replaces the message with a result
         await self._confirm_callback(interaction, self.db_id)
 
     @ui.button(label="Cancel", style=discord.ButtonStyle.secondary, emoji="❌")
     async def cancel_button(self, interaction: discord.Interaction, button: ui.Button):
+        self.stop()  # terminal: retire so the timer can't grey out the result
         await interaction.response.edit_message(
             embed=discord.Embed(
                 description=t("general.cancelled", self.lang),
@@ -1926,7 +1993,7 @@ async def admin_close_suggestions(interaction: discord.Interaction, db_id: int):
         )
         return
 
-    view = ConfirmActionView(lang, _do_close_suggestions, db_id=db_id)
+    view = _bind(ConfirmActionView(lang, _do_close_suggestions, db_id=db_id), interaction)
     await interaction.response.edit_message(
         embed=discord.Embed(description=t("confirm.close_suggestions", lang), color=discord.Color.orange()),
         view=view,
@@ -2035,7 +2102,7 @@ async def admin_select_for_vote(interaction: discord.Interaction, db_id: int):
         label = format_layer_poll_option(s)
         options.append(discord.SelectOption(label=label, value=s["id"]))
 
-    view = VoteSelectionView(options, max_voting, lang, record["db_id"])
+    view = _bind(VoteSelectionView(options, max_voting, lang, record["db_id"]), interaction)
     embed = discord.Embed(
         title=t("admin.select_for_vote", lang),
         description=t("vote.select_layers", lang, max=max_voting),
@@ -2044,7 +2111,7 @@ async def admin_select_for_vote(interaction: discord.Interaction, db_id: int):
     await interaction.response.edit_message(embed=embed, view=view)
 
 
-class VoteSelectionView(ui.View):
+class VoteSelectionView(AutoDisableView):
     def __init__(self, options: list[discord.SelectOption], max_values: int,
                  lang: str, db_id: int):
         super().__init__(timeout=120)
@@ -2142,7 +2209,8 @@ class ConfirmVoteButton(ui.Button):
                 db.save_event(record["db_id"], event)
             await _start_poll(confirm_interaction, _db_id, captured_ids)
 
-        view = ConfirmActionView(lang, _do_start_vote, db_id=db_id)
+        view = _bind(ConfirmActionView(lang, _do_start_vote, db_id=db_id), interaction)
+        self.view.stop()  # retire the selection view; replaced by the confirm dialog
         await interaction.response.edit_message(
             embed=discord.Embed(
                 description=t("confirm.start_vote", lang),
@@ -2580,7 +2648,7 @@ async def admin_delete_event(interaction: discord.Interaction, db_id: int):
         )
         return
 
-    view = ConfirmActionView(lang, _do_delete_event, db_id=db_id)
+    view = _bind(ConfirmActionView(lang, _do_delete_event, db_id=db_id), interaction)
     await interaction.response.edit_message(
         embed=discord.Embed(description=t("confirm.delete_event", lang), color=discord.Color.orange()),
         view=view,
@@ -2665,7 +2733,7 @@ def _remove_option_label(s: dict) -> str:
     return label
 
 
-class RemoveSuggestionView(ui.View):
+class RemoveSuggestionView(AutoDisableView):
     """Picker view that chunks suggestions across multiple Select dropdowns.
 
     Discord caps each Select at 25 options, so we split the suggestion list
@@ -2704,6 +2772,7 @@ class RemoveSuggestionSelect(ui.Select):
         self.lang = lang
 
     async def callback(self, interaction: discord.Interaction):
+        self.view.stop()  # retire the picker; replaced by the confirm dialog
         await _confirm_admin_remove_suggestion(
             interaction, self.view.db_id, self.values[0], self.lang)
 
@@ -2749,7 +2818,7 @@ async def _confirm_admin_remove_suggestion(interaction: discord.Interaction,
 
     await interaction.response.edit_message(
         embed=embed,
-        view=ConfirmActionView(lang, confirm_cb, db_id),
+        view=_bind(ConfirmActionView(lang, confirm_cb, db_id), interaction),
     )
 
 
@@ -2784,7 +2853,7 @@ async def admin_remove_suggestion(interaction: discord.Interaction, db_id: int):
     )
     await interaction.response.edit_message(
         embed=embed,
-        view=RemoveSuggestionView(visible, lang, db_id),
+        view=_bind(RemoveSuggestionView(visible, lang, db_id), interaction),
     )
 
 
@@ -2856,7 +2925,7 @@ async def admin_do_remove_suggestion(interaction: discord.Interaction,
         )
         await interaction.response.edit_message(
             embed=embed,
-            view=RemoveSuggestionView(visible, lang, db_id),
+            view=_bind(RemoveSuggestionView(visible, lang, db_id), interaction),
         )
     else:
         await interaction.response.edit_message(
@@ -2880,7 +2949,7 @@ def _self_removals_used(event: dict, user_id) -> int:
     return (event.get("user_removal_counts") or {}).get(str(user_id), 0)
 
 
-class SelfRemoveSuggestionView(ui.View):
+class SelfRemoveSuggestionView(AutoDisableView):
     """Ephemeral picker listing only the caller's own suggestions.
 
     A user can hold at most `max_suggestions_per_user` (≤10) suggestions, so a
@@ -2909,6 +2978,7 @@ class SelfRemoveSuggestionSelect(ui.Select):
         self.lang = lang
 
     async def callback(self, interaction: discord.Interaction):
+        self.view.stop()  # retire the picker; replaced by the confirm dialog
         await _confirm_self_remove_suggestion(
             interaction, self.view.db_id, self.values[0], self.lang)
 
@@ -2959,7 +3029,7 @@ async def handle_remove_own_suggestion(interaction: discord.Interaction, db_id: 
         color=discord.Color.dark_red(),
     )
     await interaction.response.send_message(
-        embed=embed, view=SelfRemoveSuggestionView(own, lang, db_id),
+        embed=embed, view=_bind(SelfRemoveSuggestionView(own, lang, db_id), interaction),
         ephemeral=True)
 
 
@@ -3004,7 +3074,7 @@ async def _confirm_self_remove_suggestion(interaction: discord.Interaction,
 
     await interaction.response.edit_message(
         embed=embed,
-        view=ConfirmActionView(lang, confirm_cb, db_id),
+        view=_bind(ConfirmActionView(lang, confirm_cb, db_id), interaction),
     )
 
 
@@ -3261,7 +3331,7 @@ async def admin_set_event_roles(interaction: discord.Interaction, db_id: int):
     role_ids = list(event.get("allowed_role_ids") or [])
     user_ids = list(event.get("allowed_user_ids") or [])
 
-    view = EventGateEditView(db_id, role_ids, user_ids, lang)
+    view = _bind(EventGateEditView(db_id, role_ids, user_ids, lang), interaction)
     embed = discord.Embed(
         title=t("roles.picker_title", lang),
         description=t("roles.picker_desc", lang,
@@ -4650,6 +4720,7 @@ class EventScheduleModal(ui.Modal):
             allow_multiple_votes=bool(self.settings.get("default_allow_multiple_votes", False)),
             event_name=event_name,
         )
+        view = _bind(view, interaction)
         embed = discord.Embed(
             title=t("event.wizard_confirm_title", lang),
             description=t("event.wizard_confirm_desc", lang),
@@ -4658,7 +4729,7 @@ class EventScheduleModal(ui.Modal):
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
-class EventCreateConfirmView(ui.View):
+class EventCreateConfirmView(AutoDisableView):
     """Wizard step 2: gate selection, source picker, multi-vote toggle, Confirm.
 
     The schedule fields collected by EventScheduleModal are stashed on
@@ -4759,6 +4830,7 @@ class EventCreateConfirmView(ui.View):
             await interaction.response.send_message(
                 t("event.select_sources_required", self.lang), ephemeral=True)
             return
+        self.stop()  # terminal: the wizard message is replaced by the created-event ack
         settings = db.get_guild_settings(interaction.guild_id) or {}
         await _finalize_event_creation(
             interaction, settings, self.lang,
@@ -4847,7 +4919,7 @@ async def cmd_delete_event(interaction: discord.Interaction):
         await interaction.response.send_message(t("event.no_event", lang), ephemeral=True)
         return
 
-    view = ConfirmActionView(lang, _do_delete_event, db_id=db_id)
+    view = _bind(ConfirmActionView(lang, _do_delete_event, db_id=db_id), interaction)
     await interaction.response.send_message(
         embed=discord.Embed(description=t("confirm.delete_event", lang), color=discord.Color.orange()),
         view=view,
@@ -4855,7 +4927,7 @@ async def cmd_delete_event(interaction: discord.Interaction):
     )
 
 
-class EventGateEditView(ui.View):
+class EventGateEditView(AutoDisableView):
     """Ephemeral multi-select picker for the per-event role/user allow-list.
 
     Opened by the Admin panel's "Edit Allow-list" button (admin_set_event_roles).
@@ -4931,6 +5003,7 @@ class EventGateEditView(ui.View):
         await interaction.response.defer()
 
     async def _on_submit(self, interaction: discord.Interaction):
+        self.stop()  # terminal: the picker is replaced by the result message
         lock = _get_guild_lock(interaction.guild_id)
         async with lock:
             record = db.get_event_by_db_id(interaction.guild_id, self.db_id)
@@ -4967,6 +5040,7 @@ class EventGateEditView(ui.View):
         )
 
     async def _on_cancel(self, interaction: discord.Interaction):
+        self.stop()  # terminal: retire so the timer can't grey out the result
         await interaction.response.edit_message(
             content=t("general.cancelled", self.lang),
             embed=None, view=None,
@@ -5098,7 +5172,7 @@ async def cmd_history_add(interaction: discord.Interaction):
     sources = _resolve_event_sources({}, settings)
     if len(sources) > 1:
         options = [discord.SelectOption(label=s[:100], value=s) for s in sources[:25]]
-        view = SourceSelectView(options, lang)
+        view = _bind(SourceSelectView(options, lang), interaction)
         embed = discord.Embed(
             title=t("history.add_title", lang),
             description=t("suggest.select_source", lang),
@@ -5171,7 +5245,7 @@ def _history_remove_bucketed(entries: list, lang: str) -> tuple:
     return embed, view
 
 
-class HistoryRemoveSourceView(ui.View):
+class HistoryRemoveSourceView(AutoDisableView):
     """Source picker for /history_remove. Skipped when only one source is
     represented in the recent history."""
 
@@ -5203,12 +5277,15 @@ class HistoryRemoveSourceView(ui.View):
         self.add_item(cancel)
 
     async def _on_select(self, interaction: discord.Interaction):
+        self.stop()  # retire the source picker; replaced by the bucket picker
         source = interaction.data["values"][0]
         embed, view = _history_remove_bucketed(
             self.by_source.get(source, []), self.lang)
+        view = _bind(view, interaction)
         await interaction.response.edit_message(embed=embed, view=view)
 
     async def _on_cancel(self, interaction: discord.Interaction):
+        self.stop()  # terminal: retire so the timer can't grey out the result
         await interaction.response.edit_message(
             embed=discord.Embed(description=t("general.cancelled", self.lang),
                                 color=discord.Color.greyple()),
@@ -5216,7 +5293,7 @@ class HistoryRemoveSourceView(ui.View):
         )
 
 
-class HistoryRemoveBucketedView(ui.View):
+class HistoryRemoveBucketedView(AutoDisableView):
     """Multi-bucket Selects of history entries. Picking one shows a
     confirmation dialog before the actual delete fires."""
 
@@ -5257,11 +5334,13 @@ class HistoryRemoveBucketedView(ui.View):
         self.add_item(cancel)
 
     async def _on_pick(self, interaction: discord.Interaction):
+        self.stop()  # retire the bucket picker; replaced by the confirm dialog
         entry_id_str = interaction.data["values"][0]
         entry = self._entries_by_id.get(entry_id_str)
         await _confirm_history_remove(interaction, entry_id_str, entry, self.lang)
 
     async def _on_cancel(self, interaction: discord.Interaction):
+        self.stop()  # terminal: retire so the timer can't grey out the result
         await interaction.response.edit_message(
             embed=discord.Embed(description=t("general.cancelled", self.lang),
                                 color=discord.Color.greyple()),
@@ -5293,7 +5372,7 @@ async def _confirm_history_remove(interaction: discord.Interaction,
 
     await interaction.response.edit_message(
         embed=embed,
-        view=ConfirmActionView(lang, confirm_cb),
+        view=_bind(ConfirmActionView(lang, confirm_cb), interaction),
     )
 
 
@@ -5331,10 +5410,11 @@ async def cmd_history_remove(interaction: discord.Interaction):
         # Skip source picker — straight to the bucketed entry list.
         entries = next(iter(by_source.values()))
         embed, view = _history_remove_bucketed(entries, lang)
+        view = _bind(view, interaction)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
         return
 
-    view = HistoryRemoveSourceView(by_source, lang)
+    view = _bind(HistoryRemoveSourceView(by_source, lang), interaction)
     embed = discord.Embed(
         title=t("history.remove_title", lang),
         description=t("suggest.select_source", lang),
