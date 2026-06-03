@@ -1,0 +1,18 @@
+# Runtime / local-only state — never ship to the build context
+data/
+reference/
+*.json
+
+# VCS, IDE, tooling
+.git/
+.gitignore
+.idea/
+.claude/
+
+# Docs
+docs/
+*.md
+
+# Python caches / env
+__pycache__/
+.env

@@ -85,12 +85,14 @@ docker-compose up -d
 ### Manual
 
 ```bash
-pip install discord.py python-dotenv aiohttp pynacl
+pip install -r requirements.txt
 cp .env.dist .env
 # Edit .env and set DISCORD_BOT_TOKEN
-cd DebugScriptHelper
+cd bot
 python bot.py
 ```
+
+> Note: a local `python bot.py` from inside `bot/` writes the SQLite DB to `bot/data/layer_vote.db` (cwd-relative). Set `DB_PATH` to point at the repo-root `data/` dir if you want to share the Docker DB locally, e.g. `DB_PATH=../data/layer_vote.db python bot.py`.
 
 ## First-Time Setup (in Discord)
 
@@ -153,15 +155,18 @@ python bot.py
 
 ```
 squad-event-map-layer-vote/
-├── DebugScriptHelper/
+├── bot/
 │   ├── bot.py              # Main bot: commands, views, background tasks
 │   ├── config.py           # .env loading, constants
 │   ├── database.py         # SQLite with JSON blobs
 │   ├── i18n.py             # Translation strings (de/en)
 │   └── utils.py            # Embed builders, formatting helpers
 ├── data/                   # SQLite DB (Docker volume)
+├── reference/              # Local reference layer data (not used at runtime)
+├── requirements.txt
 ├── Dockerfile
 ├── docker-compose.yml
+├── .dockerignore
 ├── .env.dist
 ├── .gitignore
 ├── README.md

@@ -20,7 +20,7 @@ from typing import Optional
 
 logger = logging.getLogger("layer_vote.db")
 
-DB_FILE = os.path.join("data", "layer_vote.db")
+DB_FILE = os.getenv("DB_PATH", os.path.join("data", "layer_vote.db"))
 
 # ---------------------------------------------------------------------------
 # JSON helpers for datetime round-tripping
