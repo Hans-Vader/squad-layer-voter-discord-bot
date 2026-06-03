@@ -306,6 +306,28 @@ _STRINGS: dict[str, dict[str, str]] = {
         "de": "{mention} Vorschlagszeit abgelaufen in <#{channel_id}> — {count} Vorschläge, manuelle Auswahl erforderlich (max {max}).",
         "en": "{mention} Suggestion time expired in <#{channel_id}> — {count} suggestions, manual selection required (max {max}).",
     },
+    # Short, user-facing display names for the event phase enum, used wherever a
+    # raw phase value would otherwise be shown (e.g. the Info and Admin panels).
+    "phase.name.created": {
+        "de": "Erstellt",
+        "en": "Created",
+    },
+    "phase.name.suggestions_open": {
+        "de": "Vorschläge offen",
+        "en": "Suggestions open",
+    },
+    "phase.name.suggestions_closed": {
+        "de": "Vorschläge geschlossen",
+        "en": "Suggestions closed",
+    },
+    "phase.name.voting": {
+        "de": "Abstimmung läuft",
+        "en": "Voting in progress",
+    },
+    "phase.name.completed": {
+        "de": "Abgeschlossen",
+        "en": "Completed",
+    },
     "embed.status_suggestions_open_until": {
         "de": "Vorschläge offen bis <t:{ts}:f> (<t:{ts}:R>)",
         "en": "Suggestions open until <t:{ts}:f> (<t:{ts}:R>)",
@@ -830,6 +852,14 @@ _STRINGS: dict[str, dict[str, str]] = {
         "de": "Vorschlag entfernt: {layer}\nVerbleibende Entfernungen: **{remaining}**",
         "en": "Suggestion removed: {layer}\nRemovals remaining: **{remaining}**",
     },
+    "info.suggestions_used": {
+        "de": "{used}/{max} Vorschläge genutzt",
+        "en": "{used}/{max} suggestions used",
+    },
+    "info.your_suggestions": {
+        "de": "Deine Vorschläge",
+        "en": "Your Suggestions",
+    },
     "info.removals_label": {
         "de": "Eigene Entfernungen",
         "en": "Self-Removals",
@@ -1057,3 +1087,13 @@ def t(key: str, lang: str = "en", **kwargs) -> str:
         except (KeyError, IndexError):
             pass
     return text
+
+
+def phase_name(phase: str, lang: str = "en") -> str:
+    """Localized display name for an event phase enum value.
+
+    Falls back to the raw value for unknown/legacy phases so the caller never
+    surfaces a missing-key placeholder.
+    """
+    key = f"phase.name.{phase}"
+    return t(key, lang) if key in _STRINGS else (phase or "?")

@@ -23,7 +23,7 @@ from discord.ext import commands
 
 import database as db
 from config import TOKEN, ADMIN_IDS, EVENT_CHECK_INTERVAL, EVENT_CHECK_INTERVAL_FAST, EVENT_CRITICAL_WINDOW, LAYERS_JSON_SOURCES, DEBUG_MODE, is_excluded_layer
-from i18n import t
+from i18n import t, phase_name
 from utils import (
     has_organizer_role, is_guild_admin,
     check_role_gate,
@@ -1739,8 +1739,9 @@ async def handle_info(interaction: discord.Interaction, db_id: int):
     )
 
     embed.add_field(
-        name=t("admin.phase", lang, phase=event.get("phase", "?")),
-        value=f"{len(user_suggestions)}/{max_suggestions} suggestions used",
+        name=t("admin.phase", lang, phase=phase_name(event.get("phase", "?"), lang)),
+        value=t("info.suggestions_used", lang,
+                used=len(user_suggestions), max=max_suggestions),
         inline=False,
     )
 
@@ -1759,7 +1760,8 @@ async def handle_info(interaction: discord.Interaction, db_id: int):
 
     if user_suggestions:
         lines = [f"• {format_layer_short(s)}" for s in user_suggestions]
-        embed.add_field(name="Your Suggestions", value="\n".join(lines), inline=False)
+        embed.add_field(name=t("info.your_suggestions", lang),
+                        value="\n".join(lines), inline=False)
 
     # Recent winners for this channel — same source/formatting as /history.
     # Show as many as the re-suggestion blocking window (history_lookback_events),
@@ -1818,7 +1820,7 @@ async def handle_admin_panel(interaction: discord.Interaction, db_id: int):
 
     embed = discord.Embed(
         title=display_name(event, record["db_id"], lang=lang),
-        description=t("admin.phase", lang, phase=phase) + "\n" +
+        description=t("admin.phase", lang, phase=phase_name(phase, lang)) + "\n" +
                     t("admin.suggestions_count", lang, count=len(event.get("suggestions", []))),
         color=discord.Color.dark_red(),
     )
