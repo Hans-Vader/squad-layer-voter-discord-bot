@@ -7,7 +7,7 @@ Permission checks, embed builders, layer formatting helpers.
 
 import logging
 from datetime import datetime
-from typing import Optional
+from typing import Callable, Optional
 from urllib.parse import urlencode
 
 import discord
@@ -50,6 +50,28 @@ def display_name(event: dict, db_id: int, *, lang: str = "en") -> str:
     if name:
         return name
     return t("event.fallback_name", lang, db_id=db_id)
+
+
+# Discord caps thread (and channel) names at 100 characters; create_thread
+# raises HTTPException if exceeded. Since a composed name like
+# "Voting — {event_label}" can run up to ~109 chars (event names alone go to
+# EVENT_NAME_MAX_LENGTH = 100), truncate defensively so a long event title can
+# never break thread creation — which, for a gated event, would otherwise fall
+# back to posting the poll in the open channel with no allow-list enforcement.
+DISCORD_THREAD_NAME_MAX_LENGTH = 100
+
+
+def truncate_thread_name(name: str,
+                         *, max_length: int = DISCORD_THREAD_NAME_MAX_LENGTH) -> str:
+    """Truncate a composed thread name to Discord's length limit.
+
+    Appends an ellipsis when truncation occurs so the name reads as visibly
+    shortened rather than abruptly cut. Returns `name` unchanged when it
+    already fits. The result never exceeds `max_length`.
+    """
+    if len(name) <= max_length:
+        return name
+    return name[:max_length - 1].rstrip() + "…"
 
 
 # Layer source whose factionIds and map names map cleanly to SquadCalc params.
@@ -408,6 +430,28 @@ def _split_entries_evenly(entries: list[str], max_len: int = 1024) -> list[str]:
     return list(entries)
 
 
+def fit_lines_to_field(lines: list[str],
+                       more_label: Callable[[int], str],
+                       max_len: int = 1024) -> str:
+    """Join ``lines`` with newlines so the result fits a Discord embed field.
+
+    A field value is capped at ``max_len`` (1024) characters. If every line
+    fits, returns them joined as-is. Otherwise keeps the longest leading run of
+    lines that still fits alongside a trailing summary produced by
+    ``more_label(dropped)`` — a callable given the number of omitted lines that
+    returns the localized "… and N more" string.
+    """
+    joined = "\n".join(lines)
+    if len(joined) <= max_len:
+        return joined
+    for keep in range(len(lines) - 1, -1, -1):
+        candidate = "\n".join(lines[:keep] + [more_label(len(lines) - keep)])
+        if len(candidate) <= max_len:
+            return candidate
+    # Pathological: even the summary line alone exceeds max_len.
+    return more_label(len(lines))[:max_len]
+
+
 def _embed_total_chars(embed: Embed) -> int:
     """Return total character count of an embed (Discord limit: 6000)."""
     total = len(embed.title or "") + len(embed.description or "")
@@ -559,6 +603,18 @@ def build_event_embed(event: dict, settings: dict, db_id: int,
                 value=winner_text,
                 inline=False,
             )
+
+            # Ready-to-copy Squad RCON command to set the winning layer. The
+            # string is built at vote completion (bot.build_admin_change_layer)
+            # and stored on the event; a fenced code block renders as a
+            # one-tap-copy block on mobile.
+            command = event.get("winning_layer_command")
+            if command:
+                embed.add_field(
+                    name=f"⚙️ {t('embed.admin_command_header', lang)}",
+                    value=f"```\n{command}\n```",
+                    inline=False,
+                )
 
     # Footer: when the supermod source is active, the legend takes the slot
     # so users can decode SPM/SU and GoingDark prefixes (the SquadCalc hint

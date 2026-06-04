@@ -20,7 +20,7 @@ from typing import Optional
 
 logger = logging.getLogger("layer_vote.db")
 
-DB_FILE = os.path.join("data", "layer_vote.db")
+DB_FILE = os.getenv("DB_PATH", os.path.join("data", "layer_vote.db"))
 
 # ---------------------------------------------------------------------------
 # JSON helpers for datetime round-tripping
@@ -61,7 +61,7 @@ DEFAULT_GUILD_SETTINGS = {
     "blacklisted_units": [],
     "max_suggestions_per_user": 2,
     "max_total_suggestions": 25,
-    "history_lookback_events": 3,
+    "history_lookback_events": 12,
     # How many times a user may remove their own suggestion per event. 0
     # disables the user-facing "Remove Suggestion" button entirely.
     "max_self_removals_per_user": 1,

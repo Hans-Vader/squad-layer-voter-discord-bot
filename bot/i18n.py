@@ -158,6 +158,14 @@ _STRINGS: dict[str, dict[str, str]] = {
         "de": "Mehrere aktive Events in diesem Kanal — bitte den Admin-Button auf dem jeweiligen Event-Embed verwenden.",
         "en": "Multiple active events in this channel — please use the Admin button on the specific event embed.",
     },
+    "update.refreshed": {
+        "de": "🔄 Aktualisiere {count} Event-Embed(s) in diesem Server.",
+        "en": "🔄 Refreshing {count} event embed(s) in this server.",
+    },
+    "update.none": {
+        "de": "Keine aktiven Events zum Aktualisieren in diesem Server.",
+        "en": "No active events to refresh in this server.",
+    },
     "event.select_sources_title": {
         "de": "Layer-Quellen auswählen",
         "en": "Select layer sources",
@@ -298,6 +306,28 @@ _STRINGS: dict[str, dict[str, str]] = {
         "de": "{mention} Vorschlagszeit abgelaufen in <#{channel_id}> — {count} Vorschläge, manuelle Auswahl erforderlich (max {max}).",
         "en": "{mention} Suggestion time expired in <#{channel_id}> — {count} suggestions, manual selection required (max {max}).",
     },
+    # Short, user-facing display names for the event phase enum, used wherever a
+    # raw phase value would otherwise be shown (e.g. the Info and Admin panels).
+    "phase.name.created": {
+        "de": "Erstellt",
+        "en": "Created",
+    },
+    "phase.name.suggestions_open": {
+        "de": "Vorschläge offen",
+        "en": "Suggestions open",
+    },
+    "phase.name.suggestions_closed": {
+        "de": "Vorschläge geschlossen",
+        "en": "Suggestions closed",
+    },
+    "phase.name.voting": {
+        "de": "Abstimmung läuft",
+        "en": "Voting in progress",
+    },
+    "phase.name.completed": {
+        "de": "Abgeschlossen",
+        "en": "Completed",
+    },
     "embed.status_suggestions_open_until": {
         "de": "Vorschläge offen bis <t:{ts}:f> (<t:{ts}:R>)",
         "en": "Suggestions open until <t:{ts}:f> (<t:{ts}:R>)",
@@ -412,9 +442,17 @@ _STRINGS: dict[str, dict[str, str]] = {
         "de": "Gewinner",
         "en": "Winner",
     },
+    "embed.admin_command_header": {
+        "de": "Layer setzen",
+        "en": "Set this layer",
+    },
     "embed.footer": {
         "de": "Klick auf die Karte --> 🗺 um SquadCalc zu öffnen",
         "en": "Click on the map --> 🗺 to open SquadCalc",
+    },
+    "squadcalc.open": {
+        "de": "In SquadCalc öffnen",
+        "en": "Open in SquadCalc",
     },
     "embed.footer_legend_supermod": {
         "de": "SPM/SU = SuperMod | GoingDark = SuperMod Nacht",
@@ -473,8 +511,8 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "The voting thread could not be found.",
     },
     "gate.joined": {
-        "de": "Du wurdest zum Abstimmungs-Thread hinzugefügt: {thread}",
-        "en": "You've been added to the voting thread: {thread}",
+        "de": "🗳️ Zur Abstimmung geht es hier: {thread}",
+        "en": "🗳️ Head to the voting here: {thread}",
     },
 
     # ── Voting thread (private thread created at /start_vote) ─────────────
@@ -485,6 +523,10 @@ _STRINGS: dict[str, dict[str, str]] = {
     "thread.voting_welcome": {
         "de": "🗳️ Berechtigte Mitglieder können hier abstimmen.",
         "en": "🗳️ Eligible members can vote here.",
+    },
+    "thread.voting_welcome_open": {
+        "de": "🗳️ Hier wird über dieses Event abgestimmt.",
+        "en": "🗳️ Voting for this event takes place here.",
     },
 
     # ── Admin → Edit Allow-list (per-event role/user picker) ──────────────
@@ -810,6 +852,14 @@ _STRINGS: dict[str, dict[str, str]] = {
         "de": "Vorschlag entfernt: {layer}\nVerbleibende Entfernungen: **{remaining}**",
         "en": "Suggestion removed: {layer}\nRemovals remaining: **{remaining}**",
     },
+    "info.suggestions_used": {
+        "de": "{used}/{max} Vorschläge genutzt",
+        "en": "{used}/{max} suggestions used",
+    },
+    "info.your_suggestions": {
+        "de": "Deine Vorschläge",
+        "en": "Your Suggestions",
+    },
     "info.removals_label": {
         "de": "Eigene Entfernungen",
         "en": "Self-Removals",
@@ -817,6 +867,14 @@ _STRINGS: dict[str, dict[str, str]] = {
     "info.removals_value": {
         "de": "{remaining}/{max} verbleibend",
         "en": "{remaining}/{max} remaining",
+    },
+    "info.recent_winners": {
+        "de": "Letzte Gewinner",
+        "en": "Recent Winners",
+    },
+    "info.recent_winners_more": {
+        "de": "… und {count} weitere",
+        "en": "… and {count} more",
     },
 
     # ── Event edit DM dialog ─────────────────────────────────────────────
@@ -1029,3 +1087,13 @@ def t(key: str, lang: str = "en", **kwargs) -> str:
         except (KeyError, IndexError):
             pass
     return text
+
+
+def phase_name(phase: str, lang: str = "en") -> str:
+    """Localized display name for an event phase enum value.
+
+    Falls back to the raw value for unknown/legacy phases so the caller never
+    surfaces a missing-key placeholder.
+    """
+    key = f"phase.name.{phase}"
+    return t(key, lang) if key in _STRINGS else (phase or "?")

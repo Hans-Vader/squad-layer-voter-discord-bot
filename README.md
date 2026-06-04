@@ -15,16 +15,20 @@ A Discord bot for collecting Squad layer suggestions from users and running vote
 
 ## Event Cycle
 
-1. Admin creates event (`/create_layer_suggestion`)
-2. Suggestion phase opens (scheduled or manual via `/open_suggestions`)
-3. Users suggest layers by clicking "Suggest Layer" button
-4. Admin closes suggestions (`/close_suggestions`)
-5. Admin selects or randomizes layers for voting (`/select_for_vote`)
-6. Voting starts (`/start_vote`) — Discord native poll
-7. Poll ends — winner saved to history
+Events are driven from the **Admin panel** (the `Admin` button on the event embed), not slash commands. The background scheduler can also advance phases automatically based on the event's timers.
+
+1. Organizer creates an event with `/create_layer_suggestion` (creation wizard)
+2. Suggestion phase opens — automatically at the scheduled start time, or manually via **Admin → Open Suggestions**
+3. Users suggest layers by clicking the **Suggest Layer** button
+4. Suggestions close — automatically at the deadline, or manually via **Admin → Close Suggestions** (an organizer can reopen with **Reopen Suggestions**)
+5. Organizer picks or randomizes the layers for voting via **Admin → Select for Vote** (skipped automatically when suggestions ≤ vote slots)
+6. Voting runs as a Discord native poll (gated events get a private thread)
+7. Poll ends — automatically at its duration, or manually via **Admin → End Vote** — and the winner (plus its `AdminChangeLayer` command) is saved to history
 8. Repeat
 
 ## Commands
+
+discord.py registers **12 slash commands**, in three permission tiers. Per-event configuration (gamemodes, blacklists, suggestion limits, voting parameters) and phase transitions are **not** slash commands — they live in the **Admin panel** and the **Edit Event** DM dialog (see [Interactive Buttons](#interactive-buttons-on-event-embed)).
 
 ### Setup (Discord Admin)
 
@@ -32,31 +36,20 @@ A Discord bot for collecting Squad layer suggestions from users and running vote
 |---------|-------------|
 | `/setup` | Initial server setup (organizer role, log channel, language) |
 | `/set_organizer_role` | Change the organizer role |
-| `/set_language` | Change bot language (en/de) |
+| `/set_language` | Change bot language (en/de); also refreshes active embeds |
 | `/set_log_channel` | Change the log channel |
-| `/settings` | View all current settings |
 | `/sync` | Force sync slash commands |
 
-### Configuration (Organizer)
+### Event & History Management (Organizer)
 
 | Command | Description |
 |---------|-------------|
-| `/config_gamemodes` | Select which gamemodes are available for suggestions |
-| `/config_blacklist` | Manage blacklists (maps, gamemodes, factions, unit types) |
-| `/config_suggestions` | Set max suggestions per user/total, history lookback |
+| `/create_layer_suggestion` | Create a new layer vote event in the channel (creation wizard) |
+| `/delete_event` | Delete the current event in the channel |
+| `/update` | Refresh all event embeds in this server |
 | `/refresh_layers` | Re-fetch layer data from GitHub |
-
-### Event Management (Organizer)
-
-| Command | Description |
-|---------|-------------|
-| `/create_layer_suggestion` | Create a new layer vote event in the channel |
-| `/open_suggestions` | Manually open the suggestion phase |
-| `/close_suggestions` | Close the suggestion phase |
-| `/select_for_vote` | Select layers for voting (manual or random) |
-| `/start_vote` | Start the Discord poll |
-| `/end_vote` | End voting early and determine the winner |
-| `/delete_event` | Delete the current event |
+| `/history_add` | Manually add a previously played layer to the history |
+| `/history_remove` | Remove an entry from the voting history |
 
 ### User
 
@@ -70,7 +63,9 @@ A Discord bot for collecting Squad layer suggestions from users and running vote
 |--------|-------------|
 | Suggest Layer | Start the layer suggestion dropdown flow |
 | Info | View your suggestions and event info |
-| Admin | Open admin panel (organizer only) |
+| Admin | Open the admin panel (organizer only) |
+
+The **Admin panel** holds the per-event actions that used to be slash commands: **Open / Close / Reopen Suggestions**, **Select for Vote**, **End Vote**, **Edit Event** (a DM dialog for gamemodes, blacklists, suggestion limits, and voting parameters), **Edit Allow-list** (gate the event to specific roles/users), and **Delete Event**. Gated events also surface a **Join Voting** button on the poll.
 
 ## Installation
 
@@ -85,20 +80,22 @@ docker-compose up -d
 ### Manual
 
 ```bash
-pip install discord.py python-dotenv aiohttp pynacl
+pip install -r requirements.txt
 cp .env.dist .env
 # Edit .env and set DISCORD_BOT_TOKEN
-cd DebugScriptHelper
+cd bot
 python bot.py
 ```
+
+> Note: a local `python bot.py` from inside `bot/` writes the SQLite DB to `bot/data/layer_vote.db` (cwd-relative). Set `DB_PATH` to point at the repo-root `data/` dir if you want to share the Docker DB locally, e.g. `DB_PATH=../data/layer_vote.db python bot.py`.
 
 ## First-Time Setup (in Discord)
 
 1. Run `/setup` with organizer role, log channel, and language
 2. Run `/refresh_layers` to populate the layer cache (auto-fetched on first start)
-3. Optionally configure blacklists with `/config_blacklist`
-4. Optionally configure allowed gamemodes with `/config_gamemodes`
-5. Create an event with `/create_layer_suggestion`
+3. Create an event with `/create_layer_suggestion`
+4. Open the event's **Admin → Edit Event** dialog to adjust gamemodes, blacklists, and suggestion/voting limits (optional — sensible defaults apply)
+5. Optionally gate the event to specific roles/users via **Admin → Edit Allow-list**
 
 ## Configuration
 
@@ -113,7 +110,7 @@ python bot.py
 | `PUID` | No | Docker user ID (default: 1000) |
 | `PGID` | No | Docker group ID (default: 1000) |
 
-### Guild Settings (via commands)
+### Guild Settings (via `/setup` and the Admin → Edit Event dialog)
 
 | Setting | Default | Description |
 |---------|---------|-------------|
@@ -153,15 +150,18 @@ python bot.py
 
 ```
 squad-event-map-layer-vote/
-├── DebugScriptHelper/
+├── bot/
 │   ├── bot.py              # Main bot: commands, views, background tasks
 │   ├── config.py           # .env loading, constants
 │   ├── database.py         # SQLite with JSON blobs
 │   ├── i18n.py             # Translation strings (de/en)
 │   └── utils.py            # Embed builders, formatting helpers
 ├── data/                   # SQLite DB (Docker volume)
+├── reference/              # Local reference layer data (not used at runtime)
+├── requirements.txt
 ├── Dockerfile
 ├── docker-compose.yml
+├── .dockerignore
 ├── .env.dist
 ├── .gitignore
 ├── README.md

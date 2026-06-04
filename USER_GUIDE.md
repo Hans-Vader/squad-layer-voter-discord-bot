@@ -11,7 +11,7 @@
    - **Step 2**: Select a game mode (e.g., AAS v1, RAAS v2, Invasion)
    - **Step 3**: Select Team 1 faction and unit type
    - **Step 4**: Select Team 2 faction and unit type
-   - **Step 5**: Confirm your suggestion
+   - **Step 5**: Confirm your suggestion — the preview includes an **🗺️ Open in SquadCalc** link to inspect the layer
 4. Your suggestion appears in the event embed
 
 ### Viewing Your Suggestions
@@ -20,6 +20,7 @@ Click the **"Info"** button on the event embed to see:
 - Current event phase
 - How many suggestions you've used
 - Your submitted suggestions
+- Recent winners in this channel (with the date each was decided)
 
 ### Removing Your Suggestion
 
@@ -32,7 +33,7 @@ Removing frees the slot, so you can suggest again (up to the per-user limit). Th
 
 ### Voting
 
-When the admin starts a vote, a Discord poll appears in the channel. Simply vote for your preferred layer.
+When the admin starts a vote, a Discord poll appears in a dedicated **voting thread** for the event (public for open events, private for restricted ones). Use the **Join Voting** button on the event embed to jump to it, then vote for your preferred layer.
 
 ### Viewing Past Winners
 
@@ -52,13 +53,16 @@ Use `/history` to see the winners of previous events.
 
 ### Configuring the Bot
 
-| Command | What it does |
+Per-event settings live in the **Admin → Edit Event** DM dialog (open the event embed's **Admin** panel, then **Edit Event**). From there you can adjust:
+
+| Setting | What it does |
 |---------|-------------|
-| `/config_gamemodes` | Choose which game modes are available (AAS, RAAS, etc.) |
-| `/config_blacklist maps` | Block maps from being suggested |
-| `/config_blacklist factions` | Block factions from being suggested |
-| `/config_blacklist units` | Block unit types from being suggested |
-| `/config_suggestions` | Set max suggestions per user/total, history blocking |
+| Game modes | Choose which game modes are available (AAS, RAAS, etc.) |
+| Blacklists | Block maps, factions, or unit types from being suggested |
+| Suggestion limits | Max suggestions per user / total, and history blocking |
+| Voting parameters | Voting duration, multiple-choice voting, etc. |
+
+These are snapshotted per event when it is created, so changing one event never affects another. To gate **who** may participate, use **Admin → Edit Allow-list**.
 
 ### Running an Event
 
@@ -74,44 +78,39 @@ The event name appears as the embed title, in the voting thread name (for gated 
 
 **Step 2: Open Suggestions**
 - Wait for the scheduled time, or
-- Use `/open_suggestions` to open immediately, or
-- Click Admin > "Open Suggestions" on the event embed
+- Click **Admin → Open Suggestions** on the event embed to open immediately
 
 **Step 3: Collect Suggestions**
 Users click "Suggest Layer" and submit their picks.
 
 **Step 4: Close Suggestions**
-- Use `/close_suggestions` or Admin > "Close Suggestions"
-- Closed too early? Click Admin > "Reopen Suggestions" to accept picks again. It stays open until you close it again (no auto-close timer).
+- Click **Admin → Close Suggestions** (suggestions can also auto-close at the deadline when there are more suggestions than vote slots)
+- Closed too early? Click **Admin → Reopen Suggestions** to accept picks again. It stays open until you close it again (no auto-close timer).
 
-**Step 5: Select Layers for Voting**
-- Use `/select_for_vote` or Admin > "Select for Vote"
-- Pick specific layers from the dropdown, or
-- Click "Random" to select random layers
-- Confirm your selection
+**Step 5: Select Layers & Start Voting**
+- Click **Admin → Select for Vote**
+- Pick specific layers from the dropdown, or click **Random** to select random layers
+- **Confirm** your selection — this creates the Discord poll, which runs for the configured duration
 
-**Step 6: Start Voting**
-- Use `/start_vote` to create the Discord poll
-- The poll runs for the configured duration
+  (When there are no more suggestions than vote slots, the bot can skip this step and start the poll automatically at the suggestion deadline.)
 
-**Step 7: End & Results**
-- Wait for the poll to expire naturally, or
-- Use `/end_vote` to end early
-- The winner is saved to history automatically
+**Step 6: End & Results**
+- Wait for the poll to expire naturally, or click **Admin → End Vote** to end early
+- The winner — and the `AdminChangeLayer` command to set it — is saved to history automatically
 
 ### Admin Panel
 
 Click the **"Admin"** button on the event embed for quick actions:
-- Open/Close suggestions
-- Select layers for voting
+- Open / Close / Reopen suggestions
+- Select layers for voting (confirming starts the poll)
 - End voting
 - Delete the event
 - **Edit Event** — opens a DM dialog where you can rename the event and tweak per-event config (blacklists, voting duration, max suggestions, **Max Self-Removals per User**, etc.). Pick **Event Name** from the dropdown; submit empty to revert to `Event #ID`. **Max Self-Removals per User** controls how many times each player may remove their own suggestion (`0` disables the player-facing **Remove Suggestion** button).
 - **Edit Allow-list** — set which roles/users may participate. This lives on the event embed's Admin panel (not in the Edit Event DM dialog), because Discord's role/user pickers don't work inside DMs.
 
-### Settings
+### Viewing Settings
 
-Use `/settings` to view all current configuration at a glance.
+There is no `/settings` command. Server-wide values (organizer role, log channel, language) are set with `/setup` (and `/set_organizer_role`, `/set_language`, `/set_log_channel`); per-event configuration is shown and edited in the **Admin → Edit Event** dialog.
 
 ---
 
