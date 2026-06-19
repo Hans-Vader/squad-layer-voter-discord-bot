@@ -6,6 +6,8 @@ A Discord bot for collecting Squad layer suggestions from users and running vote
 
 - **Layer Suggestions**: Users suggest layers via interactive dropdown menus (Map > Mode > Factions > Units)
 - **Layer Data**: Pulls from [SquadLayerList](https://github.com/fantinodavide/SquadLayerList) and caches locally
+- **Vehicle Info**: Shows each team's vehicle layout (named vehicles + counts) on the suggestion confirm screen, via the **Info** button (pick any suggested layer), and on the winning embed
+- **Mirror Match** *(per-event)*: Optionally force both teams to use the same unit type (factions may differ); exempts asymmetric modes (Invasion, Insurgency, Destruction, Frontline)
 - **Admin Blacklists**: Block maps, factions, unit types, or gamemodes
 - **Configurable Gamemodes**: Admin selects which gamemodes are available (AAS, RAAS, Invasion, TC, Destruction, Insurgency)
 - **Discord Native Polls**: Voting uses Discord's built-in poll system (max 10 options)
@@ -62,10 +64,10 @@ discord.py registers **12 slash commands**, in three permission tiers. Per-event
 | Button | Description |
 |--------|-------------|
 | Suggest Layer | Start the layer suggestion dropdown flow |
-| Info | View your suggestions and event info |
+| Info | View event info, your suggestions and recent winners — and pick any suggested layer to see its full per-team vehicle layout |
 | Admin | Open the admin panel (organizer only) |
 
-The **Admin panel** holds the per-event actions that used to be slash commands: **Open / Close / Reopen Suggestions**, **Select for Vote**, **End Vote**, **Edit Event** (a DM dialog for gamemodes, blacklists, suggestion limits, and voting parameters), **Edit Allow-list** (gate the event to specific roles/users), and **Delete Event**. Gated events also surface a **Join Voting** button on the poll.
+The **Admin panel** holds the per-event actions that used to be slash commands: **Open / Close / Reopen Suggestions**, **Select for Vote**, **End Vote**, **Edit Event** (a DM dialog for gamemodes, blacklists, suggestion limits, voting parameters, and the Mirror Match toggle), **Edit Allow-list** (gate the event to specific roles/users), and **Delete Event**. Gated events also surface a **Join Voting** button on the poll.
 
 ## Installation
 
