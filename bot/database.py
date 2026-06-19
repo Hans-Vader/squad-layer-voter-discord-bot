@@ -139,6 +139,15 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_layer_cache_source
             ON layer_cache(source);
 
+        -- Per-source vehicle data extracted from the layers JSON `Units` block:
+        -- {unitObjectName: [vehicle, ...]} stored as one JSON blob per source.
+        -- Regenerated (cleared + re-inserted) alongside layer_cache on refresh.
+        CREATE TABLE IF NOT EXISTS source_units (
+            source     TEXT PRIMARY KEY,
+            units_json TEXT NOT NULL DEFAULT '{}',
+            cached_at  TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
         CREATE TABLE IF NOT EXISTS events (
             id           INTEGER PRIMARY KEY AUTOINCREMENT,
             guild_id     INTEGER NOT NULL,
@@ -225,6 +234,43 @@ def clear_layer_cache():
     with conn:
         conn.execute("DELETE FROM layer_cache")
     conn.close()
+
+
+def clear_source_units():
+    """Delete all cached per-source unit/vehicle data."""
+    conn = _get_conn()
+    with conn:
+        conn.execute("DELETE FROM source_units")
+    conn.close()
+
+
+def upsert_source_units(source: str, units_map: dict):
+    """Store the {unitObjectName: [vehicle, ...]} map for a source."""
+    conn = _get_conn()
+    with conn:
+        conn.execute(
+            """INSERT INTO source_units (source, units_json, cached_at)
+               VALUES (?, ?, datetime('now'))
+               ON CONFLICT(source) DO UPDATE SET
+                 units_json=excluded.units_json, cached_at=excluded.cached_at""",
+            (source, json.dumps(units_map)),
+        )
+    conn.close()
+
+
+def get_source_units(source: str) -> dict:
+    """Return the {unitObjectName: [vehicle, ...]} map for a source (or {})."""
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT units_json FROM source_units WHERE source = ? LIMIT 1", (source,)
+    ).fetchone()
+    conn.close()
+    if not row:
+        return {}
+    try:
+        return json.loads(row[0]) or {}
+    except (ValueError, TypeError):
+        return {}
 
 
 def _source_filter(allowed_sources: Optional[list[str]], prefix: str = " AND ") -> tuple[str, list]:

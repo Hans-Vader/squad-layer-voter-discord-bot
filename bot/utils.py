@@ -204,6 +204,54 @@ def format_layer_short(suggestion: dict) -> str:
     return f"{map_name} {mode_str} — {t1_faction}/{t1_unit} vs {t2_faction}/{t2_unit}"
 
 
+# Vehicle-class display: vehType token -> (emoji, label, sort rank). Ranked so
+# combat assets list before logistics/transport. Tokens come from the layers
+# JSON `Units[].vehicles[].vehType`; unknown tokens fall back to a generic car.
+_VEHTYPE = {
+    "MBT":  ("⚔️", "MBT", 1),
+    "IFV":  ("🛡️", "IFV", 2),
+    "APC":  ("🚐", "APC", 3),
+    "TD":   ("🎯", "ATGM", 4),
+    "MGS":  ("💥", "MGS", 5),
+    "SPA":  ("💣", "Artillery", 6),
+    "SPAA": ("🛰️", "AA", 7),
+    "RSV":  ("🔭", "Recon", 8),
+    "AH":   ("🚁", "Attack Heli", 9),
+    "UH":   ("🚁", "Heli", 10),
+    "MRAP": ("🚙", "MRAP", 11),
+    "LTV":  ("🛻", "LTV", 12),
+    "ULTV": ("🛥️", "Boat", 13),
+    "MSV":  ("🚜", "MSV", 14),
+    "TRAN": ("🚚", "Transport", 15),
+    "LOGI": ("📦", "Logistics", 16),
+}
+
+
+def _vehtype_info(vt: str) -> tuple:
+    return _VEHTYPE.get(vt, ("🚗", vt or "?", 99))
+
+
+def format_vehicle_list(vehicles: list, lang: str = "en") -> str:
+    """Render a unit's vehicle list as embed text, combat classes first.
+
+    One line per vehicle: "{emoji} {count}× {name} [{class}]". Capped to a
+    Discord field's 1024 chars via fit_lines_to_field (with a localized
+    "+N more" tail). Returns the localized "no vehicles" string when empty.
+    """
+    if not vehicles:
+        return t("vehicles.none", lang)
+    ordered = sorted(
+        vehicles,
+        key=lambda v: (_vehtype_info(v.get("vehType", ""))[2], v.get("name", "")),
+    )
+    lines = []
+    for v in ordered:
+        emoji, label, _ = _vehtype_info(v.get("vehType", ""))
+        count = v.get("count", 1)
+        lines.append(f"{emoji} {count}× {v.get('name', '?')} [{label}]")
+    return fit_lines_to_field(lines, lambda n: t("vehicles.more", lang, count=n))
+
+
 def build_squadcalc_url(suggestion: dict) -> Optional[str]:
     """Build a SquadCalc URL for the given suggestion, or None if disabled.
 
@@ -603,6 +651,23 @@ def build_event_embed(event: dict, settings: dict, db_id: int,
                 value=winner_text,
                 inline=False,
             )
+
+            # Per-team vehicle layout, resolved & stored on the winner at vote
+            # completion. Absent on legacy/history winners → skip silently.
+            t1_veh = winner.get("team1_vehicles")
+            t2_veh = winner.get("team2_vehicles")
+            if t1_veh:
+                embed.add_field(
+                    name=f"🚛 Team 1 — {t1}/{t1u} {t('vehicles.label', lang)}"[:256],
+                    value=format_vehicle_list(t1_veh, lang),
+                    inline=False,
+                )
+            if t2_veh:
+                embed.add_field(
+                    name=f"🚛 Team 2 — {t2}/{t2u} {t('vehicles.label', lang)}"[:256],
+                    value=format_vehicle_list(t2_veh, lang),
+                    inline=False,
+                )
 
             # Ready-to-copy Squad RCON command to set the winning layer. The
             # string is built at vote completion (bot.build_admin_change_layer)

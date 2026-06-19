@@ -28,6 +28,7 @@ from utils import (
     has_organizer_role, is_guild_admin,
     check_role_gate,
     format_layer_short, format_layer_poll_option, suggestion_matches,
+    format_vehicle_list,
     build_event_embed, build_squadcalc_url, fit_lines_to_field,
     set_log_channel, send_to_log_channel,
     normalize_event_name,
@@ -263,6 +264,7 @@ async def fetch_and_cache_layers() -> int:
         raise RuntimeError("No layer sources returned data — cache not refreshed")
 
     db.clear_layer_cache()
+    db.clear_source_units()
     count = 0
 
     for source_name, source_url, data in fetched:
@@ -279,6 +281,10 @@ async def fetch_and_cache_layers() -> int:
         # hardcoded ALLIANCE_FACTIONS map doesn't know about.
         faction_meta = _build_faction_meta_map(data)
 
+        # Per-unit vehicle layouts from the same Units block, cached per source
+        # for the vehicle-info display (resolved at confirm/info/vote-end time).
+        db.upsert_source_units(source_name, _build_units_vehicle_map(data))
+
         # Within a single source, dedupe by rawName (last wins).
         unique: dict[str, dict] = {}
         for layer in layers_list:
@@ -291,6 +297,39 @@ async def fetch_and_cache_layers() -> int:
         count += await _cache_source_layers(source_name, unique.values(), faction_meta)
 
     return count
+
+
+# Vehicle fields kept for display (the JSON carries many more per vehicle:
+# icon/classNames/tags/spawnCommands — dropped to keep the cached blob small).
+_VEHICLE_DISPLAY_FIELDS = ("name", "vehType", "count", "delay", "respawnTime")
+
+
+def _build_units_vehicle_map(data: object) -> dict:
+    """Extract {unitObjectName: [trimmed_vehicle, ...]} from the Units block.
+
+    Only units with a non-empty vehicle list are kept; each vehicle is trimmed
+    to the display fields. Keys are the unit-object names (e.g.
+    "USMC_LD_Armored", "FRA10_LO_AirAssault_8RPIMA_Boats").
+    """
+    if not isinstance(data, dict):
+        return {}
+    units = data.get("Units")
+    if not isinstance(units, dict):
+        return {}
+    result: dict[str, list] = {}
+    for key, unit in units.items():
+        if not isinstance(unit, dict):
+            continue
+        vehicles = unit.get("vehicles")
+        if not isinstance(vehicles, list) or not vehicles:
+            continue
+        trimmed = [
+            {f: v.get(f) for f in _VEHICLE_DISPLAY_FIELDS}
+            for v in vehicles if isinstance(v, dict)
+        ]
+        if trimmed:
+            result[key] = trimmed
+    return result
 
 
 def _build_faction_meta_map(data: object) -> dict[str, dict]:
@@ -566,6 +605,85 @@ def _mirror_team2_unit_pool(layer_data: dict, team1_faction: str,
         for unit in fac["unitTypes"]:
             pool.add(unit["type"])
     return pool
+
+
+def _resolve_unit_object_key(units_map: dict, default_unit: str,
+                             default_type: Optional[str], target_type: str) -> Optional[str]:
+    """Resolve the Units-block key for a faction's loadout of `target_type`.
+
+    Verified recipe (see docs/layer_files_reference.md): the faction's
+    `defaultUnit` is the exact key for the default loadout; for other types
+    substitute the type token, and fall back to matching the same base+prefix
+    stem + type token among all keys (handles SuperMod regiment codes like
+    FRA10_LO_AirAssault_8RPIMA_Boats and alias factions). NOT filtered on
+    factionID — alias factions point defaultUnit at a base faction's objects.
+    """
+    if not default_unit:
+        return None
+    if target_type == default_type:
+        return default_unit if default_unit in units_map else None
+    if not (default_type and default_type in default_unit):
+        return None
+    sub = default_unit.replace(default_type, target_type, 1)
+    if sub in units_map:
+        return sub
+    idx = default_unit.index(default_type)
+    base_prefix = default_unit[:idx]                       # e.g. "FRA10_LO_"
+    tail = default_unit[idx + len(default_type):]          # e.g. "_2BB_Boats"
+    feat = tail.split("_")[-1] if tail else ""             # map-feature, e.g. "Boats"
+    cands = [k for k in units_map
+             if k.startswith(base_prefix)
+             and k[len(base_prefix):].startswith(target_type)]
+    if not cands:
+        return None
+    best = [k for k in cands if feat and k.endswith(feat)] or cands
+    return best[0]
+
+
+def get_team_vehicles(layer_data: dict, faction: str, team: int,
+                      unit_type: Optional[str], units_map: dict) -> list:
+    """Return the (trimmed) vehicle list for a faction's chosen loadout on a team.
+
+    Returns [] when the layer/faction/units data is missing or the unit has no
+    vehicles. `unit_type` may be the friendly type, None, or "Default" (the
+    no-unit-selection path) — all of which fall back to the default loadout.
+    """
+    if not layer_data or not faction or not units_map:
+        return []
+    entry = get_faction_entry_for_team(layer_data.get("factions", []), faction, team)
+    if not entry:
+        return []
+    default_unit = entry.get("defaultUnit", "")
+    default_type = _extract_default_unit_type(default_unit, faction)
+    if unit_type in (None, "", "Default"):
+        unit_type = default_type
+    key = _resolve_unit_object_key(units_map, default_unit, default_type, unit_type)
+    if not key:
+        return []
+    return units_map.get(key) or []
+
+
+def _attach_winner_vehicles(winner: dict) -> None:
+    """Resolve & store both teams' vehicle lists on a winning suggestion dict so
+    the completed-event embed can render them without a live lookup. No-op when
+    the layer/units data is unavailable (the embed then omits vehicle fields)."""
+    if not isinstance(winner, dict):
+        return
+    raw_name = winner.get("raw_name")
+    if not raw_name:
+        return
+    source = winner.get("source") or ""
+    layer_data = db.get_layer_by_raw_name(
+        raw_name, allowed_sources=[source] if source else None)
+    if not layer_data:
+        return
+    # get_team_vehicles handles an empty units_map gracefully ([] = no fields
+    # rendered), so no early-return needed when the source has no cached units.
+    units_map = db.get_source_units(source)
+    winner["team1_vehicles"] = get_team_vehicles(
+        layer_data, winner.get("team1_faction"), 1, winner.get("team1_unit"), units_map)
+    winner["team2_vehicles"] = get_team_vehicles(
+        layer_data, winner.get("team2_faction"), 2, winner.get("team2_unit"), units_map)
 
 
 def get_unit_types_for_faction(factions: list[dict], faction_id: str,
@@ -1682,6 +1800,14 @@ async def _show_confirm(interaction: discord.Interaction, state: SuggestState, s
     }
 
     mirror_line = f"\n**Mirror Match:** {t('suggest.mirror_on', lang)}" if state.mirror_effective else ""
+
+    # Per-team vehicle layout for the chosen loadouts.
+    units_map = db.get_source_units(state.source or "")
+    t1_veh = format_vehicle_list(
+        get_team_vehicles(state.layer_data, state.team1_faction, 1, state.team1_unit, units_map), lang)
+    t2_veh = format_vehicle_list(
+        get_team_vehicles(state.layer_data, state.team2_faction, 2, state.team2_unit, units_map), lang)
+
     view = _bind(ConfirmSuggestionView(lang), interaction)
     embed = discord.Embed(
         title=t("suggest.confirm_title", lang),
@@ -1689,7 +1815,9 @@ async def _show_confirm(interaction: discord.Interaction, state: SuggestState, s
             f"**Map:** {state.map_name}\n"
             f"**Mode:** {mode_str}\n"
             f"**Team 1:** {state.team1_faction} / {state.team1_unit}\n"
-            f"**Team 2:** {state.team2_faction} / {state.team2_unit}"
+            f"{t1_veh}\n"
+            f"**Team 2:** {state.team2_faction} / {state.team2_unit}\n"
+            f"{t2_veh}"
             f"{mirror_line}"
             f"{_squadcalc_link_line(preview, lang)}"
         ),
@@ -1839,17 +1967,10 @@ async def handle_suggest_submit(interaction: discord.Interaction, lang: str):
 # INFO BUTTON handler
 # ═══════════════════════════════════════════════════════════════════════════
 
-async def handle_info(interaction: discord.Interaction, db_id: int):
-    """Show info about the user's suggestions in this event."""
-    settings = db.get_guild_settings(interaction.guild_id)
-    lang = settings.get("language", "en") if settings else "en"
-
-    record = db.get_event_by_db_id(interaction.guild_id, db_id)
-    if not record:
-        await interaction.response.send_message(t("event.no_event", lang), ephemeral=True)
-        return
-
-    event = record["event"]
+def _build_info_embed(interaction: discord.Interaction, event: dict,
+                      settings: dict, channel_id: int, lang: str) -> discord.Embed:
+    """Build the Info panel embed (phase/budget, the user's suggestions, recent
+    winners). Factored out so the vehicle-detail Back button can re-render it."""
     user_suggestions = [s for s in event.get("suggestions", [])
                         if str(s.get("user_id")) == str(interaction.user.id)]
 
@@ -1890,7 +2011,7 @@ async def handle_info(interaction: discord.Interaction, db_id: int):
     # so the panel reflects exactly which winners are still blocked from being
     # re-suggested. lookback 0 (blocking disabled) falls back to the default 12.
     lookback = event_settings.get("history_lookback_events", 12) or 12
-    history = db.get_recent_history(interaction.guild_id, record["channel_id"], limit=lookback)
+    history = db.get_recent_history(interaction.guild_id, channel_id, limit=lookback)
     winners = []
     for h in history:
         winner = h.get("winning_layer")
@@ -1912,7 +2033,141 @@ async def handle_info(interaction: discord.Interaction, db_id: int):
         embed.add_field(name=t("info.recent_winners", lang),
                         value=value, inline=False)
 
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    return embed
+
+
+async def _render_info(interaction: discord.Interaction, db_id: int, *, edit: bool):
+    """Render the Info panel — as a fresh ephemeral message (edit=False) or by
+    editing the current one (edit=True, used by the vehicle-detail Back button).
+    Attaches a layer-pick select for vehicle details when suggestions exist."""
+    settings = db.get_guild_settings(interaction.guild_id)
+    lang = settings.get("language", "en") if settings else "en"
+
+    record = db.get_event_by_db_id(interaction.guild_id, db_id)
+    if not record:
+        if edit:
+            await interaction.response.edit_message(
+                embed=discord.Embed(description=t("event.no_event", lang),
+                                    color=discord.Color.red()),
+                view=None)
+        else:
+            await interaction.response.send_message(t("event.no_event", lang), ephemeral=True)
+        return
+
+    event = record["event"]
+    embed = _build_info_embed(interaction, event, settings, record["channel_id"], lang)
+    suggestions = event.get("suggestions", [])
+    view = (_bind(VehicleInfoSelectView(suggestions, lang, db_id), interaction)
+            if suggestions else None)
+    if edit:
+        await interaction.response.edit_message(embed=embed, view=view)
+    else:
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+
+async def handle_info(interaction: discord.Interaction, db_id: int):
+    """Info panel: the user's suggestions, budgets and recent winners, plus a
+    select to drill into any suggested layer's full vehicle layout."""
+    await _render_info(interaction, db_id, edit=False)
+
+
+_VEHICLE_PICKER_OPTIONS_PER_SELECT = 25
+
+
+def _vehicle_option_label(s: dict) -> str:
+    """Discord-safe (≤100 char) select-option label for a suggestion."""
+    label = format_layer_short(s)
+    return f"{label[:97]}..." if len(label) > 100 else label
+
+
+class VehicleInfoSelectView(AutoDisableView):
+    """Picker listing every suggested layer; selecting one shows its vehicles.
+
+    Discord caps a Select at 25 options; the suggestion total is itself capped
+    at 25, so this is normally a single select (chunked defensively anyway)."""
+
+    def __init__(self, suggestions: list[dict], lang: str, db_id: int):
+        super().__init__(timeout=600)
+        self.db_id = db_id
+        valid = [s for s in suggestions if s.get("id")]
+        chunks = [valid[i:i + _VEHICLE_PICKER_OPTIONS_PER_SELECT]
+                  for i in range(0, len(valid), _VEHICLE_PICKER_OPTIONS_PER_SELECT)]
+        for chunk in chunks[:5]:
+            self.add_item(VehicleInfoSelect(chunk, lang))
+
+
+class VehicleInfoSelect(ui.Select):
+    def __init__(self, chunk: list[dict], lang: str):
+        options = [
+            discord.SelectOption(
+                label=_vehicle_option_label(s),
+                value=s["id"],
+                description=(s.get("user_name") or "")[:100] or None,
+            )
+            for s in chunk if s.get("id")
+        ]
+        super().__init__(placeholder=t("info.vehicle_select_placeholder", lang),
+                         options=options, min_values=1, max_values=1)
+        self.lang = lang
+
+    async def callback(self, interaction: discord.Interaction):
+        self.view.stop()  # retire the picker so its timer can't clobber the detail view
+        await _show_vehicle_detail(interaction, self.view.db_id, self.values[0], self.lang)
+
+
+class VehicleBackView(AutoDisableView):
+    """A single Back button that returns from the vehicle detail to the Info panel."""
+
+    def __init__(self, db_id: int, lang: str):
+        super().__init__(timeout=600)
+        self.db_id = db_id
+        back = ui.Button(label=t("button.back", lang),
+                         style=discord.ButtonStyle.secondary, emoji="⬅️")
+        back.callback = self._back
+        self.add_item(back)
+
+    async def _back(self, interaction: discord.Interaction):
+        self.stop()  # retire this view; _render_info attaches a fresh picker
+        await _render_info(interaction, self.db_id, edit=True)
+
+
+async def _show_vehicle_detail(interaction: discord.Interaction, db_id: int,
+                               suggestion_id: str, lang: str):
+    """Render the per-team vehicle breakdown for a selected suggestion."""
+    record = db.get_event_by_db_id(interaction.guild_id, db_id)
+    suggestion = None
+    if record:
+        suggestion = next((s for s in record["event"].get("suggestions", [])
+                           if s.get("id") == suggestion_id), None)
+    if suggestion is None:
+        await interaction.response.edit_message(
+            embed=discord.Embed(description=t("event.no_event", lang),
+                                color=discord.Color.red()),
+            view=None)
+        return
+
+    source = suggestion.get("source") or ""
+    layer_data = db.get_layer_by_raw_name(
+        suggestion.get("raw_name", ""), allowed_sources=[source] if source else None)
+    units_map = db.get_source_units(source)
+
+    embed = discord.Embed(
+        title=t("info.vehicle_detail_title", lang, layer=format_layer_short(suggestion)),
+        color=discord.Color.blurple(),
+    )
+    for team, fac_key, unit_key in ((1, "team1_faction", "team1_unit"),
+                                    (2, "team2_faction", "team2_unit")):
+        faction = suggestion.get(fac_key, "?")
+        unit = suggestion.get(unit_key, "?")
+        vehicles = (get_team_vehicles(layer_data, faction, team, unit, units_map)
+                    if layer_data else [])
+        embed.add_field(
+            name=f"🚛 Team {team} — {faction} / {unit}"[:256],
+            value=format_vehicle_list(vehicles, lang),
+            inline=False,
+        )
+    await interaction.response.edit_message(
+        embed=embed, view=_bind(VehicleBackView(db_id, lang), interaction))
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -2723,6 +2978,7 @@ async def admin_end_vote(interaction: discord.Interaction, db_id: int):
         event["phase"] = "completed"
         event["winning_layer"] = winner
         event["winning_layer_command"] = build_admin_change_layer(winner)
+        _attach_winner_vehicles(winner)
         db.save_event(record["db_id"], event)
 
         # Only record events that actually produced a winner.
@@ -5816,6 +6072,7 @@ async def check_events_loop():
                                                 rec["event"]["phase"] = "completed"
                                                 rec["event"]["winning_layer"] = winner
                                                 rec["event"]["winning_layer_command"] = build_admin_change_layer(winner)
+                                                _attach_winner_vehicles(winner)
                                                 db.save_event(rec["db_id"], rec["event"])
                                                 if winner:
                                                     db.save_voting_history(

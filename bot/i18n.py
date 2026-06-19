@@ -512,6 +512,10 @@ _STRINGS: dict[str, dict[str, str]] = {
         "de": "Auswahl bestätigen",
         "en": "Confirm Selection",
     },
+    "button.back": {
+        "de": "Zurück",
+        "en": "Back",
+    },
     "button.join_vote": {
         "de": "Zur Abstimmung",
         "en": "Join Voting",
@@ -901,6 +905,28 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "Recent Winners",
     },
     "info.recent_winners_more": {
+        "de": "… und {count} weitere",
+        "en": "… and {count} more",
+    },
+    "info.vehicle_select_placeholder": {
+        "de": "Layer für Fahrzeug-Details wählen…",
+        "en": "Select a layer for vehicle details…",
+    },
+    "info.vehicle_detail_title": {
+        "de": "Fahrzeuge — {layer}",
+        "en": "Vehicles — {layer}",
+    },
+
+    # ── Vehicle info ─────────────────────────────────────────────────────
+    "vehicles.label": {
+        "de": "Fahrzeuge",
+        "en": "Vehicles",
+    },
+    "vehicles.none": {
+        "de": "_Keine Fahrzeuge_",
+        "en": "_No vehicles_",
+    },
+    "vehicles.more": {
         "de": "… und {count} weitere",
         "en": "… and {count} more",
     },
