@@ -301,7 +301,9 @@ async def fetch_and_cache_layers() -> int:
 
 # Vehicle fields kept for display (the JSON carries many more per vehicle:
 # icon/classNames/tags/spawnCommands — dropped to keep the cached blob small).
-_VEHICLE_DISPLAY_FIELDS = ("name", "vehType", "count", "delay", "respawnTime")
+# spawnerSize is kept so the formatter can tell boats (spawnerSize "BOAT")
+# from other ULTVs (e.g. the Minsk 400 quad bike) — they share vehType "ULTV".
+_VEHICLE_DISPLAY_FIELDS = ("name", "vehType", "spawnerSize", "count", "delay", "respawnTime")
 
 
 def _build_units_vehicle_map(data: object) -> dict:

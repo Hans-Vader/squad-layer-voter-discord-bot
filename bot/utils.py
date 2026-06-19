@@ -204,9 +204,12 @@ def format_layer_short(suggestion: dict) -> str:
     return f"{map_name} {mode_str} — {t1_faction}/{t1_unit} vs {t2_faction}/{t2_unit}"
 
 
-# Vehicle-class display: vehType token -> (emoji, label, sort rank). Ranked so
+# Vehicle-class display: class token -> (emoji, label, sort rank). Ranked so
 # combat assets list before logistics/transport. Tokens come from the layers
-# JSON `Units[].vehicles[].vehType`; unknown tokens fall back to a generic car.
+# JSON `Units[].vehicles[].vehType`, EXCEPT "BOAT" which is derived from
+# spawnerSize (see _vehicle_class) — boats span several vehTypes (ULTV RHIBs,
+# "RHIB Logistics" is LOGI) so spawnerSize is the reliable signal. Unknown
+# tokens fall back to a generic car.
 _VEHTYPE = {
     "MBT":  ("⚔️", "MBT", 1),
     "IFV":  ("🛡️", "IFV", 2),
@@ -220,15 +223,25 @@ _VEHTYPE = {
     "UH":   ("🚁", "Heli", 10),
     "MRAP": ("🚙", "MRAP", 11),
     "LTV":  ("🛻", "LTV", 12),
-    "ULTV": ("🛥️", "Boat", 13),
+    "ULTV": ("🏍️", "Light", 13),
     "MSV":  ("🚜", "MSV", 14),
     "TRAN": ("🚚", "Transport", 15),
     "LOGI": ("📦", "Logistics", 16),
+    "BOAT": ("🛥️", "Boat", 17),
 }
 
 
-def _vehtype_info(vt: str) -> tuple:
-    return _VEHTYPE.get(vt, ("🚗", vt or "?", 99))
+def _vehicle_class(v: dict) -> str:
+    """Effective display class for a vehicle. Boats (spawnerSize "BOAT", e.g.
+    RHIBs) get a dedicated "BOAT" class regardless of their vehType; everything
+    else uses its vehType token."""
+    if v.get("spawnerSize") == "BOAT":
+        return "BOAT"
+    return v.get("vehType", "")
+
+
+def _vehtype_info(token: str) -> tuple:
+    return _VEHTYPE.get(token, ("🚗", token or "?", 99))
 
 
 def format_vehicle_list(vehicles: list, lang: str = "en") -> str:
@@ -242,11 +255,11 @@ def format_vehicle_list(vehicles: list, lang: str = "en") -> str:
         return t("vehicles.none", lang)
     ordered = sorted(
         vehicles,
-        key=lambda v: (_vehtype_info(v.get("vehType", ""))[2], v.get("name", "")),
+        key=lambda v: (_vehtype_info(_vehicle_class(v))[2], v.get("name", "")),
     )
     lines = []
     for v in ordered:
-        emoji, label, _ = _vehtype_info(v.get("vehType", ""))
+        emoji, label, _ = _vehtype_info(_vehicle_class(v))
         count = v.get("count", 1)
         lines.append(f"{emoji} {count}× {v.get('name', '?')} [{label}]")
     return fit_lines_to_field(lines, lambda n: t("vehicles.more", lang, count=n))
