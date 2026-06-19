@@ -525,6 +525,49 @@ def get_factions_for_team(layer_data: dict, team: int,
     return result
 
 
+# Game modes whose two teams have asymmetric unit-type pools (attacker/defender,
+# e.g. AirAssault is attacker-only). A "mirror match" — both teams the same unit
+# type — is frequently impossible there, so Mirror Match never applies to them.
+MIRROR_INCOMPATIBLE_GAMEMODES = {"Invasion", "Insurgency", "Destruction", "Frontline"}
+
+
+def _layer_is_separated(layer_data: dict) -> bool:
+    """True when the layer keeps factions split per team (Invasion-style).
+
+    On separated layers each faction entry is restricted to a single team
+    (availableOnTeams == [1] or [2]); symmetric layers list every faction as
+    [1, 2]. Used as a safety net so any asymmetric layer is exempt from Mirror
+    Match even if its gamemode isn't in MIRROR_INCOMPATIBLE_GAMEMODES.
+    """
+    for fac in layer_data.get("factions", []):
+        if isinstance(fac, dict) and len(fac.get("availableOnTeams") or [1, 2]) == 1:
+            return True
+    return False
+
+
+def _is_mirror_compatible(layer_data: dict) -> bool:
+    """Whether Mirror Match can be enforced on this layer (symmetric teams)."""
+    if (layer_data.get("gamemode") or "") in MIRROR_INCOMPATIBLE_GAMEMODES:
+        return False
+    return not _layer_is_separated(layer_data)
+
+
+def _mirror_team2_unit_pool(layer_data: dict, team1_faction: str,
+                            blacklisted_factions: list[str] = None,
+                            blacklisted_units: list[str] = None) -> set:
+    """Unit types at least one *other* faction can field on team 2.
+
+    Excludes team1_faction (Team 2 may not reuse Team 1's faction), so a unit
+    type in this pool is guaranteed to have a valid Team 2 mirror faction.
+    """
+    pool = set()
+    for fac in get_factions_for_team(layer_data, 2, blacklisted_factions,
+                                     blacklisted_units, exclude_faction=team1_faction):
+        for unit in fac["unitTypes"]:
+            pool.add(unit["type"])
+    return pool
+
+
 def get_unit_types_for_faction(factions: list[dict], faction_id: str,
                                blacklisted_units: list[str] = None,
                                team: int = None) -> list[dict]:
@@ -924,7 +967,7 @@ class SuggestState:
     __slots__ = ("guild_id", "channel_id", "db_id", "source", "map_name",
                  "mode_raw_name", "gamemode", "layer_version",
                  "team1_faction", "team1_unit", "team2_faction", "team2_unit",
-                 "layer_data", "flow")
+                 "layer_data", "flow", "mirror_match", "mirror_effective")
 
     def __init__(self, guild_id: int, channel_id: int, flow: str = "suggest",
                  db_id: int = 0):
@@ -949,6 +992,11 @@ class SuggestState:
         # "suggest" = normal event suggestion; "history_add" = manual
         # insertion into voting_history via /history_add.
         self.flow = flow
+        # Mirror Match: the event-level toggle (snapshotted at flow start) and
+        # the per-suggestion "effective" flag (toggle AND a mirror-compatible
+        # layer). Only mirror_effective drives the placeholder/skip/confirm.
+        self.mirror_match = False
+        self.mirror_effective = False
 
 
 # Active suggestion sessions: user_id -> SuggestState
@@ -1053,6 +1101,7 @@ async def handle_suggest_start(interaction: discord.Interaction, db_id: int):
 
     # Start suggestion flow
     state = SuggestState(interaction.guild_id, interaction.channel_id, db_id=db_id)
+    state.mirror_match = bool(event.get("mirror_match", False))
     _suggest_sessions[interaction.user.id] = state
 
     sources = _resolve_event_sources(event, settings)
@@ -1303,36 +1352,71 @@ class ModeSelect(ui.Select):
         state.gamemode = layer_data["gamemode"]
         state.layer_version = layer_data["layer_version"]
         state.layer_data = layer_data
+        # Mirror Match only applies to symmetric layers; on asymmetric modes the
+        # normal independent flow runs (with a notice at the team 1 step).
+        state.mirror_effective = state.mirror_match and _is_mirror_compatible(layer_data)
 
         settings = db.get_guild_settings(state.guild_id)
-        lang = settings.get("language", "en") if settings else "en"
-        event_settings = _state_event_settings(state) if state.db_id else (settings or {})
-        bl_factions = event_settings.get("blacklisted_factions", [])
-        bl_units = event_settings.get("blacklisted_units", [])
+        await _show_team1_faction_select(interaction, state, settings)
 
-        # Get factions for team 1
-        factions = get_factions_for_team(layer_data, 1, bl_factions, bl_units)
-        if not factions:
-            await interaction.response.edit_message(
-                embed=discord.Embed(description="No factions available.", color=discord.Color.red()),
-                view=None,
-            )
-            return
 
-        options = _faction_select_options(factions)
+async def _show_team1_faction_select(interaction: discord.Interaction,
+                                     state: SuggestState, settings: dict,
+                                     notice: str = ""):
+    """Render the Team 1 faction dropdown.
 
-        mode_str = f"{state.gamemode} {state.layer_version}".strip() if state.layer_version else state.gamemode
-        view = _bind(Team1FactionSelectView(options, lang), interaction)
-        embed = discord.Embed(
-            title=t("suggest.phase_title", lang),
-            description=(
-                f"**Map:** {state.map_name}\n"
-                f"**Mode:** {mode_str}\n"
-                f"{t('suggest.select_team1_faction', lang)}"
-            ),
-            color=discord.Color.green(),
+    Also the re-entry point when a Mirror Match faction turns out to have no
+    mirrorable unit type (`notice` carries the explanation in that case).
+    """
+    lang = settings.get("language", "en") if settings else "en"
+    event_settings = _state_event_settings(state) if state.db_id else (settings or {})
+    bl_factions = event_settings.get("blacklisted_factions", [])
+    bl_units = event_settings.get("blacklisted_units", [])
+
+    factions = get_factions_for_team(state.layer_data, 1, bl_factions, bl_units)
+
+    # Mirror Match: drop Team 1 factions with no mirrorable unit type so the user
+    # can't pick a dead end. A unit type is mirrorable when ≥2 factions field it
+    # (Team 2 may not reuse Team 1's faction). Factions with no unit types stay —
+    # they take the "Default" path where mirror is a no-op.
+    if state.mirror_effective:
+        type_count: dict = {}
+        for fac in get_factions_for_team(state.layer_data, 2, bl_factions, bl_units):
+            for unit in fac["unitTypes"]:
+                type_count[unit["type"]] = type_count.get(unit["type"], 0) + 1
+        mirrorable = {tp for tp, count in type_count.items() if count >= 2}
+        factions = [f for f in factions
+                    if not f["unitTypes"]
+                    or any(u["type"] in mirrorable for u in f["unitTypes"])]
+
+    if not factions:
+        await interaction.response.edit_message(
+            embed=discord.Embed(description="No factions available.", color=discord.Color.red()),
+            view=None,
         )
-        await interaction.response.edit_message(embed=embed, view=view)
+        return
+
+    options = _faction_select_options(factions)
+
+    prefix = ""
+    if notice:
+        prefix = f"{notice}\n\n"
+    elif state.mirror_match and not state.mirror_effective:
+        prefix = f"{t('suggest.mirror_mode_excluded', lang, mode=state.gamemode)}\n\n"
+
+    mode_str = f"{state.gamemode} {state.layer_version}".strip() if state.layer_version else state.gamemode
+    view = _bind(Team1FactionSelectView(options, lang), interaction)
+    embed = discord.Embed(
+        title=t("suggest.phase_title", lang),
+        description=(
+            f"{prefix}"
+            f"**Map:** {state.map_name}\n"
+            f"**Mode:** {mode_str}\n"
+            f"{t('suggest.select_team1_faction', lang)}"
+        ),
+        color=discord.Color.green(),
+    )
+    await interaction.response.edit_message(embed=embed, view=view)
 
 
 class Team1FactionSelectView(AutoDisableView):
@@ -1358,11 +1442,26 @@ class Team1FactionSelect(ui.Select):
         settings = db.get_guild_settings(state.guild_id)
         lang = settings.get("language", "en") if settings else "en"
         event_settings = _state_event_settings(state) if state.db_id else (settings or {})
+        bl_factions = event_settings.get("blacklisted_factions", [])
         bl_units = event_settings.get("blacklisted_units", [])
 
         # Get unit types for team 1 faction
         units = get_unit_types_for_faction(
             state.layer_data.get("factions", []), state.team1_faction, bl_units, team=1)
+
+        # Mirror Match: only offer unit types that some other faction can also
+        # field on team 2, so the user can never reach a dead end on team 2.
+        if state.mirror_effective and units:
+            pool = _mirror_team2_unit_pool(
+                state.layer_data, state.team1_faction, bl_factions, bl_units)
+            units = [u for u in units if u.get("type") in pool]
+            if not units:
+                # This faction has no mirrorable unit type — bounce back to the
+                # team 1 faction step with an explanation. (Pre-filtering in
+                # _show_team1_faction_select makes this defensive.)
+                await _show_team1_faction_select(
+                    interaction, state, settings, notice=t("suggest.mirror_no_unit", lang))
+                return
 
         if not units:
             # No unit types — skip to team 2
@@ -1375,15 +1474,20 @@ class Team1FactionSelect(ui.Select):
             for u in units[:25]
         ]
 
+        unit_placeholder = t(
+            "suggest.select_team1_unit_mirror" if state.mirror_effective
+            else "suggest.select_team1_unit", lang)
+        hint = f"{t('suggest.mirror_hint', lang)}\n\n" if state.mirror_effective else ""
         mode_str = f"{state.gamemode} {state.layer_version}".strip() if state.layer_version else state.gamemode
-        view = _bind(Team1UnitSelectView(options, lang), interaction)
+        view = _bind(Team1UnitSelectView(options, lang, placeholder=unit_placeholder), interaction)
         embed = discord.Embed(
             title=t("suggest.phase_title", lang),
             description=(
+                f"{hint}"
                 f"**Map:** {state.map_name}\n"
                 f"**Mode:** {mode_str}\n"
                 f"**Team 1:** {state.team1_faction}\n"
-                f"{t('suggest.select_team1_unit', lang)}"
+                f"{unit_placeholder}"
             ),
             color=discord.Color.green(),
         )
@@ -1391,14 +1495,16 @@ class Team1FactionSelect(ui.Select):
 
 
 class Team1UnitSelectView(AutoDisableView):
-    def __init__(self, options: list[discord.SelectOption], lang: str):
+    def __init__(self, options: list[discord.SelectOption], lang: str,
+                 placeholder: str = None):
         super().__init__(timeout=600)
-        self.add_item(Team1UnitSelect(options, lang))
+        self.add_item(Team1UnitSelect(options, lang, placeholder=placeholder))
 
 
 class Team1UnitSelect(ui.Select):
-    def __init__(self, options: list[discord.SelectOption], lang: str):
-        super().__init__(placeholder=t("suggest.select_team1_unit", lang),
+    def __init__(self, options: list[discord.SelectOption], lang: str,
+                 placeholder: str = None):
+        super().__init__(placeholder=placeholder or t("suggest.select_team1_unit", lang),
                          options=options, min_values=1, max_values=1)
         self.lang = lang
 
@@ -1425,6 +1531,12 @@ async def _show_team2_faction_select(interaction: discord.Interaction,
     factions = get_factions_for_team(
         state.layer_data, 2, bl_factions, bl_units,
         exclude_faction=state.team1_faction)
+
+    # Mirror Match: Team 2 must field Team 1's unit type, so keep only the
+    # factions that support it (skipped for the "Default" / no-unit path).
+    if state.mirror_effective and state.team1_unit not in (None, "Default"):
+        factions = [f for f in factions
+                    if any(u.get("type") == state.team1_unit for u in f["unitTypes"])]
 
     if not factions:
         await interaction.response.edit_message(
@@ -1471,6 +1583,14 @@ class Team2FactionSelect(ui.Select):
         self.view.stop()  # retire this step so its timer can't clobber later steps
         state.team2_faction = self.values[0]
         settings = db.get_guild_settings(state.guild_id)
+
+        # Mirror Match: Team 2 uses the same unit type as Team 1 — skip the
+        # Team 2 unit-type step entirely and go straight to confirmation.
+        if state.mirror_effective:
+            state.team2_unit = state.team1_unit
+            await _show_confirm(interaction, state, settings)
+            return
+
         lang = settings.get("language", "en") if settings else "en"
         event_settings = _state_event_settings(state) if state.db_id else (settings or {})
         bl_units = event_settings.get("blacklisted_units", [])
@@ -1561,6 +1681,7 @@ async def _show_confirm(interaction: discord.Interaction, state: SuggestState, s
         "team2_unit_prefix": _resolve_unit_prefix(state.layer_data, state.team2_faction, 2),
     }
 
+    mirror_line = f"\n**Mirror Match:** {t('suggest.mirror_on', lang)}" if state.mirror_effective else ""
     view = _bind(ConfirmSuggestionView(lang), interaction)
     embed = discord.Embed(
         title=t("suggest.confirm_title", lang),
@@ -1569,6 +1690,7 @@ async def _show_confirm(interaction: discord.Interaction, state: SuggestState, s
             f"**Mode:** {mode_str}\n"
             f"**Team 1:** {state.team1_faction} / {state.team1_unit}\n"
             f"**Team 2:** {state.team2_faction} / {state.team2_unit}"
+            f"{mirror_line}"
             f"{_squadcalc_link_line(preview, lang)}"
         ),
         color=discord.Color.gold(),
@@ -3317,6 +3439,7 @@ _EDIT_PROPERTIES: list[dict] = [
     {"key": "voting_duration_hours",     "label_key": "edit.prop.voting_duration",       "kind": "vote_duration", "target": "event"},
     {"key": "max_voting_layers",         "label_key": "edit.prop.max_voting_layers",     "kind": "int",      "target": "event",  "min": 1,  "max": 10},
     {"key": "allow_multiple_votes",      "label_key": "edit.prop.allow_multiple_votes",  "kind": "bool",     "target": "event"},
+    {"key": "mirror_match",              "label_key": "edit.prop.mirror_match",          "kind": "bool",     "target": "event",  "note_key": "edit.prop.mirror_match_note"},
     {"key": "suggestion_duration_seconds", "label_key": "edit.prop.suggestion_duration", "kind": "duration", "target": "event"},
     {"key": "suggestion_start_time",     "label_key": "edit.prop.suggestion_start_time", "kind": "datetime", "target": "event"},
 ]
@@ -3701,10 +3824,12 @@ async def _show_property_editor(interaction: discord.Interaction, user_id: int,
     elif prop["kind"] == "bool":
         view = EditBoolView(user_id, db_id, guild_id, lang, prop, bool(current))
         _set_active_view(user_id, view)
+        desc = t("edit.bool_prompt", lang, value=_format_property_value(current, "bool"))
+        if prop.get("note_key"):
+            desc = f"{desc}\n\n{t(prop['note_key'], lang)}"
         embed = discord.Embed(
             title=label,
-            description=t("edit.bool_prompt", lang,
-                          value=_format_property_value(current, "bool")),
+            description=desc,
             color=discord.Color.blurple(),
         )
         await interaction.response.edit_message(embed=embed, view=view)
@@ -4762,6 +4887,7 @@ class EventScheduleModal(ui.Modal):
             voting_duration_hours=voting_duration_hours,
             offered_sources=self.offered_sources,
             allow_multiple_votes=bool(self.settings.get("default_allow_multiple_votes", False)),
+            mirror_match=bool(self.settings.get("default_mirror_match", False)),
             event_name=event_name,
         )
         view = _bind(view, interaction)
@@ -4782,7 +4908,7 @@ class EventCreateConfirmView(AutoDisableView):
     """
 
     def __init__(self, lang, sst, suggestion_duration_seconds, voting_duration_hours,
-                 offered_sources, allow_multiple_votes, event_name):
+                 offered_sources, allow_multiple_votes, event_name, mirror_match=False):
         super().__init__(timeout=300)
         self.lang = lang
         self.sst = sst
@@ -4790,6 +4916,7 @@ class EventCreateConfirmView(AutoDisableView):
         self.voting_duration_hours = voting_duration_hours
         self.offered_sources = list(offered_sources)
         self.allow_multiple_votes = bool(allow_multiple_votes)
+        self.mirror_match = bool(mirror_match)
         self.event_name = event_name
         self.selected_role_ids: list[int] = []
         self.selected_user_ids: list[int] = []
@@ -4822,7 +4949,7 @@ class EventCreateConfirmView(AutoDisableView):
             self.source_select.callback = self._sources_changed
             self.add_item(self.source_select)
 
-        # Row 2 — multi-vote toggle + Confirm
+        # Row 2 — multi-vote + mirror-match toggles + Confirm
         self.multi_button = ui.Button(
             label=self._multi_label(),
             style=self._multi_style(),
@@ -4830,6 +4957,14 @@ class EventCreateConfirmView(AutoDisableView):
         )
         self.multi_button.callback = self._multi_toggled
         self.add_item(self.multi_button)
+
+        self.mirror_button = ui.Button(
+            label=self._mirror_label(),
+            style=self._mirror_style(),
+            row=2,
+        )
+        self.mirror_button.callback = self._mirror_toggled
+        self.add_item(self.mirror_button)
 
         self.confirm_button = ui.Button(
             label=t("button.confirm_selection", lang),
@@ -4846,6 +4981,13 @@ class EventCreateConfirmView(AutoDisableView):
 
     def _multi_style(self) -> discord.ButtonStyle:
         return discord.ButtonStyle.success if self.allow_multiple_votes else discord.ButtonStyle.secondary
+
+    def _mirror_label(self) -> str:
+        key = "event.wizard_mirror_on" if self.mirror_match else "event.wizard_mirror_off"
+        return t(key, self.lang)
+
+    def _mirror_style(self) -> discord.ButtonStyle:
+        return discord.ButtonStyle.success if self.mirror_match else discord.ButtonStyle.secondary
 
     async def _gate_changed(self, interaction: discord.Interaction):
         roles: list[int] = []
@@ -4869,6 +5011,12 @@ class EventCreateConfirmView(AutoDisableView):
         self.multi_button.style = self._multi_style()
         await interaction.response.edit_message(view=self)
 
+    async def _mirror_toggled(self, interaction: discord.Interaction):
+        self.mirror_match = not self.mirror_match
+        self.mirror_button.label = self._mirror_label()
+        self.mirror_button.style = self._mirror_style()
+        await interaction.response.edit_message(view=self)
+
     async def _confirm(self, interaction: discord.Interaction):
         if not self.selected_sources:
             await interaction.response.send_message(
@@ -4883,6 +5031,7 @@ class EventCreateConfirmView(AutoDisableView):
             suggestion_duration_seconds=self.suggestion_duration_seconds,
             voting_duration_hours=self.voting_duration_hours,
             allow_multiple_votes=self.allow_multiple_votes,
+            mirror_match=self.mirror_match,
             allowed_role_ids=self.selected_role_ids,
             allowed_user_ids=self.selected_user_ids,
             ack_via_followup=True,
@@ -4897,7 +5046,8 @@ async def _finalize_event_creation(interaction: discord.Interaction, settings: d
                                    allowed_role_ids: list[int],
                                    allowed_user_ids: list[int],
                                    ack_via_followup: bool,
-                                   event_name: Optional[str] = None):
+                                   event_name: Optional[str] = None,
+                                   mirror_match: bool = False):
     """Create the event row and post its embed.
 
     Sole call site is the EventCreateConfirmView confirm button — the
@@ -4909,6 +5059,7 @@ async def _finalize_event_creation(interaction: discord.Interaction, settings: d
     event_data["voting_duration_hours"] = max(1, min(MAX_VOTING_DURATION_HOURS, voting_duration_hours))
     event_data["suggestion_duration_seconds"] = suggestion_duration_seconds
     event_data["allow_multiple_votes"] = bool(allow_multiple_votes)
+    event_data["mirror_match"] = bool(mirror_match)
     event_data["allowed_sources"] = list(allowed_sources)
     event_data["allowed_role_ids"] = list(allowed_role_ids)
     event_data["allowed_user_ids"] = list(allowed_user_ids)

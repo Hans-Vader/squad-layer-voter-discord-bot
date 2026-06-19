@@ -75,6 +75,7 @@ DEFAULT_GUILD_SETTINGS = {
     "default_suggestion_duration": None,
     "default_voting_duration_hours": 24,
     "default_allow_multiple_votes": False,
+    "default_mirror_match": False,
 }
 
 
@@ -698,6 +699,11 @@ def build_default_event(suggestion_start_time=None,
         "selected_for_vote": [],
         "winning_layer": None,
         "allow_multiple_votes": False,
+        # When True, every suggestion must give both teams the same unit type
+        # (Mirror Match). Only enforced on symmetric gamemodes — Invasion,
+        # Insurgency, Destruction and Frontline are exempt. Editable via the
+        # Admin → Edit Event DM dialog.
+        "mirror_match": False,
         "suggestions": [],
         # Per-user count of how many of their own suggestions a user has
         # removed via the "Remove Suggestion" button (str(user_id) -> int).

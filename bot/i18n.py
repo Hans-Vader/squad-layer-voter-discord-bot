@@ -232,6 +232,26 @@ _STRINGS: dict[str, dict[str, str]] = {
         "de": "Wähle den Einheitstyp für Team 2.",
         "en": "Select the unit type for Team 2.",
     },
+    "suggest.select_team1_unit_mirror": {
+        "de": "Wähle den Einheitstyp für Team 1 (Mirror Match!)",
+        "en": "Select the unit type for Team 1 (Mirror Match!)",
+    },
+    "suggest.mirror_hint": {
+        "de": "⚠️ Mirror Match aktiv: Team 2 erhält automatisch denselben Einheitstyp.",
+        "en": "⚠️ Mirror Match active: Team 2 will automatically use the same unit type.",
+    },
+    "suggest.mirror_on": {
+        "de": "aktiv",
+        "en": "enabled",
+    },
+    "suggest.mirror_mode_excluded": {
+        "de": "ℹ️ Mirror Match gilt nicht für {mode} — beide Teams werden normal gewählt.",
+        "en": "ℹ️ Mirror Match does not apply to {mode} — both teams are chosen normally.",
+    },
+    "suggest.mirror_no_unit": {
+        "de": "Für diese Fraktion ist kein Mirror-Einheitstyp möglich. Bitte wähle eine andere Fraktion für Team 1.",
+        "en": "No mirrorable unit type for this faction. Please pick a different faction for Team 1.",
+    },
     "suggest.confirm_title": {
         "de": "Vorschlag bestätigen",
         "en": "Confirm Suggestion",
@@ -597,8 +617,8 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "Confirm event configuration",
     },
     "event.wizard_confirm_desc": {
-        "de": "Wähle Rolle/Nutzer, die teilnehmen dürfen (optional), die Layer-Quellen und ob mehrere Stimmen erlaubt sind. Dann **Bestätigen**.",
-        "en": "Pick the role/user allowed to participate (optional), the layer sources, and whether multiple votes are allowed. Then **Confirm**.",
+        "de": "Wähle Rolle/Nutzer, die teilnehmen dürfen (optional), die Layer-Quellen, ob mehrere Stimmen erlaubt sind und ob **Mirror Match** gilt (beide Teams gleicher Einheitstyp; nur für symmetrische Modi — Invasion/Insurgency/Destruction/Frontline ausgenommen). Dann **Bestätigen**.",
+        "en": "Pick the role/user allowed to participate (optional), the layer sources, whether multiple votes are allowed, and whether **Mirror Match** applies (both teams same unit type; symmetric modes only — Invasion/Insurgency/Destruction/Frontline are exempt). Then **Confirm**.",
     },
     "event.wizard_gate_placeholder": {
         "de": "Rolle/Nutzer, die teilnehmen dürfen (optional)",
@@ -611,6 +631,14 @@ _STRINGS: dict[str, dict[str, str]] = {
     "event.wizard_multi_off": {
         "de": "Mehrfachstimmen: AUS",
         "en": "Multiple votes: OFF",
+    },
+    "event.wizard_mirror_on": {
+        "de": "Mirror Match: AN",
+        "en": "Mirror Match: ON",
+    },
+    "event.wizard_mirror_off": {
+        "de": "Mirror Match: AUS",
+        "en": "Mirror Match: OFF",
     },
 
     # ── Settings display ──────────────────────────────────────────────────
@@ -1047,6 +1075,14 @@ _STRINGS: dict[str, dict[str, str]] = {
     "edit.prop.allow_multiple_votes": {
         "de": "Mehrfachstimmen erlauben",
         "en": "Allow Multiple Votes",
+    },
+    "edit.prop.mirror_match": {
+        "de": "Mirror Match (gleicher Einheitstyp)",
+        "en": "Mirror Match (same unit type)",
+    },
+    "edit.prop.mirror_match_note": {
+        "de": "Wenn aktiv, müssen beide Teams denselben Einheitstyp haben (die Fraktionen dürfen sich unterscheiden). Gilt nur für symmetrische Modi — Invasion, Insurgency, Destruction und Frontline sind ausgenommen.",
+        "en": "When enabled, both teams must use the same unit type (the factions may differ). Applies to symmetric modes only — Invasion, Insurgency, Destruction and Frontline are exempt.",
     },
     "edit.prop.suggestion_duration": {
         "de": "Vorschlagsphasen-Dauer",
