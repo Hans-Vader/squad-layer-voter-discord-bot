@@ -11,8 +11,10 @@
    - **Step 2**: Select a game mode (e.g., AAS v1, RAAS v2, Invasion)
    - **Step 3**: Select Team 1 faction and unit type
    - **Step 4**: Select Team 2 faction and unit type
-   - **Step 5**: Confirm your suggestion — the preview includes an **🗺️ Open in SquadCalc** link to inspect the layer
+   - **Step 5**: Confirm your suggestion — the preview shows each team's **vehicle layout** plus an **🗺️ Open in SquadCalc** link to inspect the layer
 4. Your suggestion appears in the event embed
+
+> **Mirror Match events:** if the organizer enabled Mirror Match, the Team 1 unit-type dropdown is labelled **"(Mirror Match!)"** and Team 2 automatically uses the **same unit type** — you only pick Team 2's faction. It does not apply to Invasion, Insurgency, Destruction or Frontline layers (those are suggested normally, with a notice).
 
 ### Viewing Your Suggestions
 
@@ -21,6 +23,8 @@ Click the **"Info"** button on the event embed to see:
 - How many suggestions you've used
 - Your submitted suggestions
 - Recent winners in this channel (with the date each was decided)
+
+It also has a **dropdown to pick any suggested layer** and view its full per-team **vehicle layout** (counts and types for both teams).
 
 ### Removing Your Suggestion
 
@@ -61,6 +65,7 @@ Per-event settings live in the **Admin → Edit Event** DM dialog (open the even
 | Blacklists | Block maps, factions, or unit types from being suggested |
 | Suggestion limits | Max suggestions per user / total, and history blocking |
 | Voting parameters | Voting duration, multiple-choice voting, etc. |
+| Mirror Match | Require both teams to use the same unit type — factions may differ (symmetric modes only) |
 
 These are snapshotted per event when it is created, so changing one event never affects another. To gate **who** may participate, use **Admin → Edit Allow-list**.
 
@@ -130,3 +135,9 @@ A: If a layer was suggested in one of the last N events (configurable), it canno
 
 **Q: What maps are excluded by default?**
 A: Jensen's Range, Tutorial, and Training maps are automatically excluded during layer import and never appear in suggestions.
+
+**Q: What is Mirror Match?**
+A: An optional per-event setting (organizer enables it in **Admin → Edit Event**) that requires both teams to field the **same unit type** — e.g. both Mechanized — though the factions can differ. Team 2's unit type is set automatically to match Team 1's. It applies only to symmetric modes; Invasion, Insurgency, Destruction and Frontline are exempt (those layers are suggested normally).
+
+**Q: Where does the vehicle list come from?**
+A: It's read from the same SquadLayerList data, per faction/unit/team. It reflects the layer's assigned loadout, so an attacking and defending team can have different vehicles. If a layer's loadout has no vehicles for a unit, none are shown.
