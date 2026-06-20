@@ -10,3 +10,10 @@ def test_save_and_get_guild_settings_roundtrip(temp_db):
 
 def test_get_guild_settings_returns_none_when_unconfigured(temp_db):
     assert temp_db.get_guild_settings(999) is None
+
+
+def test_default_max_voting_layers_present_via_merge(temp_db):
+    db = temp_db
+    db.save_guild_settings(1, {"language": "en"})  # legacy row, no new key
+    got = db.get_guild_settings(1)
+    assert got["default_max_voting_layers"] == 10

@@ -76,6 +76,7 @@ DEFAULT_GUILD_SETTINGS = {
     "default_voting_duration_hours": 24,
     "default_allow_multiple_votes": False,
     "default_mirror_match": False,
+    "default_max_voting_layers": 10,
 }
 
 
