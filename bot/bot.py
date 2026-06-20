@@ -3724,6 +3724,153 @@ def _find_edit_property(key: str) -> Optional[dict]:
     return next((p for p in _EDIT_PROPERTIES if p["key"] == key), None)
 
 
+# Guild-defaults editor property table. Mirrors _EDIT_PROPERTIES but targets
+# the flat guild settings dict. event_name is omitted (no guild meaning); the
+# default_* keys map the per-event concepts to their guild-default storage.
+_GUILD_EDIT_PROPERTIES: list[dict] = [
+    {"key": "allowed_gamemodes",          "label_key": "edit.prop.allowed_gamemodes",          "kind": "list",          "source": db.get_unique_gamemodes},
+    {"key": "blacklisted_maps",           "label_key": "edit.prop.blacklisted_maps",           "kind": "list",          "source": db.get_unique_maps},
+    {"key": "blacklisted_factions",       "label_key": "edit.prop.blacklisted_factions",       "kind": "list",          "source": db.get_unique_factions},
+    {"key": "blacklisted_units",          "label_key": "edit.prop.blacklisted_units",          "kind": "list",          "source": db.get_unique_unit_types},
+    {"key": "max_suggestions_per_user",   "label_key": "edit.prop.max_per_user",               "kind": "int",           "min": 1, "max": 10},
+    {"key": "max_total_suggestions",      "label_key": "edit.prop.max_total",                  "kind": "int",           "min": 1, "max": 25},
+    {"key": "max_self_removals_per_user", "label_key": "edit.prop.max_self_removals",          "kind": "int",           "min": 0, "max": 10},
+    {"key": "history_lookback_events",    "label_key": "edit.prop.history_lookback",           "kind": "int",           "min": 0, "max": 50},
+    {"key": "allowed_sources",            "label_key": "edit.prop.allowed_sources",            "kind": "list",          "source": db.get_unique_sources},
+    {"key": "default_voting_duration_hours",  "label_key": "config_defaults.prop.voting_duration",      "kind": "vote_duration"},
+    {"key": "default_max_voting_layers",  "label_key": "config_defaults.prop.max_voting_layers",        "kind": "int", "min": 1, "max": 10},
+    {"key": "default_allow_multiple_votes",   "label_key": "config_defaults.prop.allow_multiple_votes", "kind": "bool"},
+    {"key": "default_mirror_match",       "label_key": "config_defaults.prop.mirror_match",            "kind": "bool", "note_key": "edit.prop.mirror_match_note"},
+    {"key": "default_suggestion_duration","label_key": "config_defaults.prop.suggestion_duration",     "kind": "duration_str"},
+    {"key": "default_suggestion_start",   "label_key": "config_defaults.prop.suggestion_start",        "kind": "duration_str", "note_key": "config_defaults.prop.suggestion_start_note"},
+]
+
+
+def _apply_guild_property(guild_id: int, prop: dict, value_or_transform):
+    """Read-modify-write a single guild setting. Sync core of the guild persist.
+
+    Seeds from DEFAULT_GUILD_SETTINGS when the guild has no row yet, so the
+    saved blob materializes a full settings dict. `value_or_transform` may be a
+    value or a callable receiving the current value.
+    """
+    settings = db.get_guild_settings(guild_id) or dict(db.DEFAULT_GUILD_SETTINGS)
+    key = prop["key"]
+    if callable(value_or_transform):
+        value = value_or_transform(settings.get(key))
+    else:
+        value = value_or_transform
+    settings[key] = value
+    db.save_guild_settings(guild_id, settings)
+    return value
+
+
+class EditTarget:
+    """What the DM edit dialog operates on. Subclasses bind it to an event or
+    to the guild defaults. `target` defaults to the event target everywhere so
+    the per-event path is unchanged."""
+
+    kind = "event"
+    properties: list[dict] = []
+    has_phase_lock = False
+    shows_event_link = False
+
+    def load(self, guild_id: int, db_id):
+        raise NotImplementedError
+
+    def read(self, obj: dict, prop: dict):
+        raise NotImplementedError
+
+    def write(self, obj: dict, prop: dict, value) -> None:
+        raise NotImplementedError
+
+    async def persist(self, guild_id: int, db_id, prop: dict, value_or_transform) -> bool:
+        raise NotImplementedError
+
+    def overview_title(self, obj: dict, db_id, guild_id: int, lang: str) -> str:
+        raise NotImplementedError
+
+    def overview_description(self, lang: str) -> str:
+        return f"{t('edit.title', lang)}\n{t('edit.select_property', lang)}"
+
+    def scope_sources(self, obj: dict, guild_id: int) -> list:
+        raise NotImplementedError
+
+
+class EventEditTarget(EditTarget):
+    kind = "event"
+    properties = _EDIT_PROPERTIES
+    has_phase_lock = True
+    shows_event_link = True
+
+    def load(self, guild_id, db_id):
+        record = db.get_event_by_db_id(guild_id, db_id)
+        return record["event"] if record else None
+
+    def read(self, obj, prop):
+        return _read_event_property(obj, prop["key"], prop.get("target", "event"))
+
+    def write(self, obj, prop, value):
+        _write_event_property(obj, prop["key"], prop.get("target", "event"), value)
+
+    async def persist(self, guild_id, db_id, prop, value_or_transform):
+        lock = _get_guild_lock(guild_id)
+        async with lock:
+            record = db.get_event_by_db_id(guild_id, db_id)
+            if not record:
+                return False
+            event = record["event"]
+            if callable(value_or_transform):
+                value = value_or_transform(self.read(event, prop))
+            else:
+                value = value_or_transform
+            self.write(event, prop, value)
+            db.save_event(record["db_id"], event)
+        await _update_event_embed(db_id)
+        return True
+
+    def overview_title(self, obj, db_id, guild_id, lang):
+        return display_name(obj, db_id, lang=lang)
+
+    def scope_sources(self, obj, guild_id):
+        settings = db.get_guild_settings(guild_id) or {}
+        return _resolve_event_sources(obj, settings)
+
+
+class GuildEditTarget(EditTarget):
+    kind = "guild"
+    properties = _GUILD_EDIT_PROPERTIES
+    has_phase_lock = False
+    shows_event_link = False
+
+    def load(self, guild_id, db_id):
+        return db.get_guild_settings(guild_id) or dict(db.DEFAULT_GUILD_SETTINGS)
+
+    def read(self, obj, prop):
+        return obj.get(prop["key"])
+
+    def write(self, obj, prop, value):
+        obj[prop["key"]] = value
+
+    async def persist(self, guild_id, db_id, prop, value_or_transform):
+        lock = _get_guild_lock(guild_id)
+        async with lock:
+            _apply_guild_property(guild_id, prop, value_or_transform)
+        return True
+
+    def overview_title(self, obj, db_id, guild_id, lang):
+        return t("config_defaults.title", lang)
+
+    def overview_description(self, lang):
+        return f"{t('config_defaults.dm_intro', lang)}\n{t('edit.select_property', lang)}"
+
+    def scope_sources(self, obj, guild_id):
+        return _resolve_offered_sources(obj)
+
+
+_EVENT_TARGET = EventEditTarget()
+_GUILD_TARGET = GuildEditTarget()
+
+
 def _build_edit_main_embed(event: dict, db_id: int, guild_id: int, lang: str,
                            updated_label: Optional[str] = None) -> discord.Embed:
     """Property overview embed shown at the top of every DM dialog state."""
