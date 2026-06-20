@@ -3769,7 +3769,7 @@ class EditTarget:
     to the guild defaults. `target` defaults to the event target everywhere so
     the per-event path is unchanged."""
 
-    kind = "event"
+    kind = ""
     properties: list[dict] = []
     has_phase_lock = False
     shows_event_link = False

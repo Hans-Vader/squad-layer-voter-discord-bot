@@ -23,6 +23,7 @@ def test_apply_guild_property_persists_value(temp_db):
     db.save_guild_settings(5, {"language": "en"})
     botmod._apply_guild_property(5, {"key": "max_total_suggestions"}, 7)
     assert db.get_guild_settings(5)["max_total_suggestions"] == 7
+    assert db.get_guild_settings(5)["language"] == "en"
 
 
 def test_apply_guild_property_seeds_defaults_when_unconfigured(temp_db):
