@@ -120,6 +120,21 @@ def parse_voting_duration_input(value: str) -> Optional[int]:
     # round to nearest hour, min 1
     return max(1, round(seconds / 3600))
 
+
+def validate_duration_str(raw) -> "tuple[bool, Optional[str]]":
+    """Validate a duration *string* for the guild-defaults editor.
+
+    Empty/whitespace -> (True, None) (clears the default). A parseable
+    duration -> (True, <trimmed string>) stored verbatim (not
+    re-canonicalized). A non-empty unparseable value -> (False, None).
+    """
+    s = (raw or "").strip()
+    if not s:
+        return True, None
+    if parse_duration_to_seconds(s) is None:
+        return False, None
+    return True, s
+
 # ---------------------------------------------------------------------------
 # Map name overrides (shorten long names at import time)
 # ---------------------------------------------------------------------------
@@ -3652,6 +3667,8 @@ def _format_property_value(value, kind: str) -> str:
             return "—"
         # value is stored as hours; reuse the seconds formatter for consistency.
         return _format_duration_seconds(int(value) * 3600)
+    if kind == "duration_str":
+        return value if value else "—"
     if kind == "datetime":
         if not value:
             return "—"
