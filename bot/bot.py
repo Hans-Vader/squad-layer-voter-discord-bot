@@ -3720,10 +3720,6 @@ _EDIT_PROPERTIES: list[dict] = [
 ]
 
 
-def _find_edit_property(key: str) -> Optional[dict]:
-    return next((p for p in _EDIT_PROPERTIES if p["key"] == key), None)
-
-
 # Guild-defaults editor property table. Mirrors _EDIT_PROPERTIES but targets
 # the flat guild settings dict. event_name is omitted (no guild meaning); the
 # default_* keys map the per-event concepts to their guild-default storage.
@@ -3931,76 +3927,79 @@ async def admin_set_event_roles(interaction: discord.Interaction, db_id: int):
     await interaction.response.edit_message(embed=embed, view=view)
 
 
-async def admin_edit_event(interaction: discord.Interaction, db_id: int):
-    """Kick off a DM edit session for this event. Triggered by Admin → Edit."""
+async def _open_edit_session(interaction: discord.Interaction, *,
+                             target: "EditTarget", db_id, guild_id: int,
+                             lang: str, via_component: bool) -> None:
+    """Reserve a DM edit session for `target` and DM the user the overview.
+
+    `via_component=True` responds by editing the triggering message (used by
+    the Admin → Edit button); `False` responds with an ephemeral message
+    (used by slash commands).
+    """
     user = interaction.user
-    settings = db.get_guild_settings(interaction.guild_id) or {}
-    lang = settings.get("language", "en")
+
+    async def _respond(embed: discord.Embed):
+        if via_component:
+            await interaction.response.edit_message(embed=embed, view=None)
+        else:
+            await interaction.response.send_message(embed=embed, ephemeral=True)
 
     existing = _active_edit_sessions.get(user.id)
     if existing is not None:
         last = existing.get("last_activity", 0)
         if time.monotonic() - last < SESSION_STALE_AFTER_SECONDS:
-            # Genuinely active — block double-edits.
-            await interaction.response.edit_message(
-                embed=discord.Embed(description=t("edit.session_active", lang),
-                                    color=discord.Color.orange()),
-                view=None,
-            )
+            await _respond(discord.Embed(description=t("edit.session_active", lang),
+                                         color=discord.Color.orange()))
             return
-        # Stuck session: the view's on_timeout never fired. Clean up and
-        # let the user start fresh.
         await _force_close_stale_session(user.id)
 
-    record = db.get_event_by_db_id(interaction.guild_id, db_id)
-    if not record:
-        await interaction.response.edit_message(
-            embed=discord.Embed(description=t("event.no_event", lang), color=discord.Color.red()),
-            view=None,
-        )
+    obj = target.load(guild_id, db_id)
+    if obj is None:
+        await _respond(discord.Embed(description=t("event.no_event", lang),
+                                     color=discord.Color.red()))
         return
 
     try:
         dm = await user.create_dm()
     except discord.Forbidden:
-        await interaction.response.edit_message(
-            embed=discord.Embed(description=t("edit.dm_blocked", lang), color=discord.Color.red()),
-            view=None,
-        )
+        await _respond(discord.Embed(description=t("edit.dm_blocked", lang),
+                                     color=discord.Color.red()))
         return
 
-    # Reserve the session BEFORE the DM send so the view's callbacks can find it.
     session: dict = {
         "db_id": db_id,
-        "guild_id": interaction.guild_id,
+        "guild_id": guild_id,
         "lang": lang,
         "dm_message": None,
         "active_view": None,
         "last_activity": time.monotonic(),
+        "target": target,
     }
     _active_edit_sessions[user.id] = session
 
-    embed = _build_edit_main_embed(record["event"], db_id, interaction.guild_id, lang)
-    view = EditMainView(user.id, db_id, interaction.guild_id, lang)
+    embed = _build_edit_main_embed(obj, db_id, guild_id, lang, target=target)
+    view = EditMainView(user.id, db_id, guild_id, lang, target=target)
     try:
         dm_msg = await dm.send(embed=embed, view=view)
     except discord.Forbidden:
         _active_edit_sessions.pop(user.id, None)
-        await interaction.response.edit_message(
-            embed=discord.Embed(description=t("edit.dm_blocked", lang), color=discord.Color.red()),
-            view=None,
-        )
+        await _respond(discord.Embed(description=t("edit.dm_blocked", lang),
+                                     color=discord.Color.red()))
         return
     session["dm_message"] = dm_msg
     session["active_view"] = view
 
-    await interaction.response.edit_message(
-        embed=discord.Embed(
-            description=f"📨 {t('edit.dm_sent', lang)}",
-            color=discord.Color.green(),
-        ),
-        view=None,
-    )
+    await _respond(discord.Embed(description=f"📨 {t('edit.dm_sent', lang)}",
+                                 color=discord.Color.green()))
+
+
+async def admin_edit_event(interaction: discord.Interaction, db_id: int):
+    """Kick off a DM edit session for this event. Triggered by Admin → Edit."""
+    settings = db.get_guild_settings(interaction.guild_id) or {}
+    lang = settings.get("language", "en")
+    await _open_edit_session(interaction, target=_EVENT_TARGET, db_id=db_id,
+                             guild_id=interaction.guild_id, lang=lang,
+                             via_component=True)
 
 
 def _close_session(user_id: int) -> None:
@@ -5154,6 +5153,21 @@ async def cmd_refresh_layers(interaction: discord.Interaction):
     except Exception as e:
         logger.error(f"Error refreshing layers: {e}")
         await interaction.followup.send(t("cache.error", lang, error=str(e)), ephemeral=True)
+
+
+@bot.tree.command(name="config_defaults",
+                  description="Edit the default settings new events start from (organizer only)")
+async def cmd_config_defaults(interaction: discord.Interaction):
+    """Open the guild-defaults DM editor (same dialog as Admin → Edit)."""
+    settings = await check_guild_configured(interaction)
+    if not settings:
+        return
+    if not await check_organizer(interaction, settings):
+        return
+    lang = settings.get("language", "en")
+    await _open_edit_session(interaction, target=_GUILD_TARGET, db_id=None,
+                             guild_id=interaction.guild_id, lang=lang,
+                             via_component=False)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
