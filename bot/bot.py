@@ -135,6 +135,7 @@ def validate_duration_str(raw) -> "tuple[bool, Optional[str]]":
         return False, None
     return True, s
 
+
 # ---------------------------------------------------------------------------
 # Map name overrides (shorten long names at import time)
 # ---------------------------------------------------------------------------
