@@ -4004,7 +4004,8 @@ async def _open_edit_session(interaction: discord.Interaction, *,
     session["dm_message"] = dm_msg
     session["active_view"] = view
 
-    await _respond(discord.Embed(description=f"📨 {t('edit.dm_sent', lang)}",
+    link = f"\n[{t('edit.dm_open_link', lang)}]({dm_msg.jump_url})"
+    await _respond(discord.Embed(description=f"📨 {t('edit.dm_sent', lang)}{link}",
                                  color=discord.Color.green()))
 
 
