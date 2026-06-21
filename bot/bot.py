@@ -120,6 +120,22 @@ def parse_voting_duration_input(value: str) -> Optional[int]:
     # round to nearest hour, min 1
     return max(1, round(seconds / 3600))
 
+
+def validate_duration_str(raw) -> "tuple[bool, Optional[str]]":
+    """Validate a duration *string* for the guild-defaults editor.
+
+    Empty/whitespace -> (True, None) (clears the default). A parseable
+    duration -> (True, <trimmed string>) stored verbatim (not
+    re-canonicalized). A non-empty unparseable value -> (False, None).
+    """
+    s = (raw or "").strip()
+    if not s:
+        return True, None
+    if parse_duration_to_seconds(s) is None:
+        return False, None
+    return True, s
+
+
 # ---------------------------------------------------------------------------
 # Map name overrides (shorten long names at import time)
 # ---------------------------------------------------------------------------
@@ -3652,6 +3668,8 @@ def _format_property_value(value, kind: str) -> str:
             return "—"
         # value is stored as hours; reuse the seconds formatter for consistency.
         return _format_duration_seconds(int(value) * 3600)
+    if kind == "duration_str":
+        return value if value else "—"
     if kind == "datetime":
         if not value:
             return "—"
@@ -3703,20 +3721,177 @@ _EDIT_PROPERTIES: list[dict] = [
 ]
 
 
-def _find_edit_property(key: str) -> Optional[dict]:
-    return next((p for p in _EDIT_PROPERTIES if p["key"] == key), None)
+# Guild-defaults editor property table. Mirrors _EDIT_PROPERTIES but targets
+# the flat guild settings dict. event_name is omitted (no guild meaning); the
+# default_* keys map the per-event concepts to their guild-default storage.
+_GUILD_EDIT_PROPERTIES: list[dict] = [
+    {"key": "allowed_gamemodes",          "label_key": "edit.prop.allowed_gamemodes",          "kind": "list",          "source": db.get_unique_gamemodes},
+    {"key": "blacklisted_maps",           "label_key": "edit.prop.blacklisted_maps",           "kind": "list",          "source": db.get_unique_maps},
+    {"key": "blacklisted_factions",       "label_key": "edit.prop.blacklisted_factions",       "kind": "list",          "source": db.get_unique_factions},
+    {"key": "blacklisted_units",          "label_key": "edit.prop.blacklisted_units",          "kind": "list",          "source": db.get_unique_unit_types},
+    {"key": "max_suggestions_per_user",   "label_key": "edit.prop.max_per_user",               "kind": "int",           "min": 1, "max": 10},
+    {"key": "max_total_suggestions",      "label_key": "edit.prop.max_total",                  "kind": "int",           "min": 1, "max": 25},
+    {"key": "max_self_removals_per_user", "label_key": "edit.prop.max_self_removals",          "kind": "int",           "min": 0, "max": 10},
+    {"key": "history_lookback_events",    "label_key": "edit.prop.history_lookback",           "kind": "int",           "min": 0, "max": 50},
+    {"key": "allowed_sources",            "label_key": "edit.prop.allowed_sources",            "kind": "list",          "source": db.get_unique_sources},
+    {"key": "default_voting_duration_hours",  "label_key": "config_defaults.prop.voting_duration",      "kind": "vote_duration"},
+    {"key": "default_max_voting_layers",  "label_key": "config_defaults.prop.max_voting_layers",        "kind": "int", "min": 1, "max": 10},
+    {"key": "default_allow_multiple_votes",   "label_key": "config_defaults.prop.allow_multiple_votes", "kind": "bool"},
+    {"key": "default_mirror_match",       "label_key": "config_defaults.prop.mirror_match",            "kind": "bool", "note_key": "edit.prop.mirror_match_note"},
+    {"key": "default_suggestion_duration","label_key": "config_defaults.prop.suggestion_duration",     "kind": "duration_str"},
+    {"key": "default_suggestion_start",   "label_key": "config_defaults.prop.suggestion_start",        "kind": "duration_str", "note_key": "config_defaults.prop.suggestion_start_note"},
+]
 
 
-def _build_edit_main_embed(event: dict, db_id: int, guild_id: int, lang: str,
-                           updated_label: Optional[str] = None) -> discord.Embed:
+def _apply_guild_property(guild_id: int, prop: dict, value_or_transform):
+    """Read-modify-write a single guild setting. Sync core of the guild persist.
+
+    Seeds from DEFAULT_GUILD_SETTINGS when the guild has no row yet, so the
+    saved blob materializes a full settings dict. `value_or_transform` may be a
+    value or a callable receiving the current value.
+    """
+    settings = db.get_guild_settings(guild_id) or dict(db.DEFAULT_GUILD_SETTINGS)
+    key = prop["key"]
+    if callable(value_or_transform):
+        value = value_or_transform(settings.get(key))
+    else:
+        value = value_or_transform
+    settings[key] = value
+    db.save_guild_settings(guild_id, settings)
+    return value
+
+
+class EditTarget:
+    """What the DM edit dialog operates on. Subclasses bind it to an event or
+    to the guild defaults. `target` defaults to the event target everywhere so
+    the per-event path is unchanged."""
+
+    kind = ""
+    properties: list[dict] = []
+    has_phase_lock = False
+
+    def finish_link(self, guild_id, db_id, channel_id, lang) -> Optional[str]:
+        """Markdown `[label](url)` appended to the Done message, or None."""
+        return None
+
+    def load(self, guild_id: int, db_id):
+        raise NotImplementedError
+
+    def read(self, obj: dict, prop: dict):
+        raise NotImplementedError
+
+    def write(self, obj: dict, prop: dict, value) -> None:
+        raise NotImplementedError
+
+    async def persist(self, guild_id: int, db_id, prop: dict, value_or_transform) -> bool:
+        raise NotImplementedError
+
+    def overview_title(self, obj: dict, db_id, guild_id: int, lang: str) -> str:
+        raise NotImplementedError
+
+    def overview_description(self, lang: str) -> str:
+        return f"{t('edit.title', lang)}\n{t('edit.select_property', lang)}"
+
+    def scope_sources(self, obj: dict, guild_id: int) -> list:
+        raise NotImplementedError
+
+
+class EventEditTarget(EditTarget):
+    kind = "event"
+    properties = _EDIT_PROPERTIES
+    has_phase_lock = True
+
+    def finish_link(self, guild_id, db_id, channel_id, lang):
+        url = _event_message_url(guild_id, db_id)
+        return f"[{t('edit.event_link', lang)}]({url})" if url else None
+
+    def load(self, guild_id, db_id):
+        record = db.get_event_by_db_id(guild_id, db_id)
+        return record["event"] if record else None
+
+    def read(self, obj, prop):
+        return _read_event_property(obj, prop["key"], prop.get("target", "event"))
+
+    def write(self, obj, prop, value):
+        _write_event_property(obj, prop["key"], prop.get("target", "event"), value)
+
+    async def persist(self, guild_id, db_id, prop, value_or_transform):
+        lock = _get_guild_lock(guild_id)
+        async with lock:
+            record = db.get_event_by_db_id(guild_id, db_id)
+            if not record:
+                return False
+            event = record["event"]
+            if callable(value_or_transform):
+                value = value_or_transform(self.read(event, prop))
+            else:
+                value = value_or_transform
+            self.write(event, prop, value)
+            db.save_event(record["db_id"], event)
+        await _update_event_embed(db_id)
+        return True
+
+    def overview_title(self, obj, db_id, guild_id, lang):
+        return display_name(obj, db_id, lang=lang)
+
+    def scope_sources(self, obj, guild_id):
+        settings = db.get_guild_settings(guild_id) or {}
+        return _resolve_event_sources(obj, settings)
+
+
+class GuildEditTarget(EditTarget):
+    kind = "guild"
+    properties = _GUILD_EDIT_PROPERTIES
+    has_phase_lock = False
+
+    def finish_link(self, guild_id, db_id, channel_id, lang):
+        # No event message to point at — link back to the channel where
+        # /config_defaults was run, the analog of the per-event "Go to event".
+        if not channel_id:
+            return None
+        url = f"https://discord.com/channels/{guild_id}/{channel_id}"
+        return f"[{t('edit.config_defaults_link', lang)}]({url})"
+
+    def load(self, guild_id, db_id):
+        return db.get_guild_settings(guild_id) or dict(db.DEFAULT_GUILD_SETTINGS)
+
+    def read(self, obj, prop):
+        return obj.get(prop["key"])
+
+    def write(self, obj, prop, value):
+        obj[prop["key"]] = value
+
+    async def persist(self, guild_id, db_id, prop, value_or_transform):
+        lock = _get_guild_lock(guild_id)
+        async with lock:
+            _apply_guild_property(guild_id, prop, value_or_transform)
+        return True
+
+    def overview_title(self, obj, db_id, guild_id, lang):
+        return t("config_defaults.title", lang)
+
+    def overview_description(self, lang):
+        return f"{t('config_defaults.dm_intro', lang)}\n{t('edit.select_property', lang)}"
+
+    def scope_sources(self, obj, guild_id):
+        return _resolve_offered_sources(obj)
+
+
+_EVENT_TARGET = EventEditTarget()
+_GUILD_TARGET = GuildEditTarget()
+
+
+def _build_edit_main_embed(obj: dict, db_id, guild_id: int, lang: str,
+                           updated_label: Optional[str] = None, *,
+                           target: "EditTarget" = _EVENT_TARGET) -> discord.Embed:
     """Property overview embed shown at the top of every DM dialog state."""
     embed = discord.Embed(
-        title=display_name(event, db_id, lang=lang),
-        description=f"{t('edit.title', lang)}\n{t('edit.select_property', lang)}",
+        title=target.overview_title(obj, db_id, guild_id, lang),
+        description=target.overview_description(lang),
         color=discord.Color.blurple(),
     )
-    for prop in _EDIT_PROPERTIES:
-        value = _read_event_property(event, prop["key"], prop["target"])
+    for prop in target.properties:
+        value = target.read(obj, prop)
         formatted = _format_property_value(value, prop["kind"])
         embed.add_field(
             name=t(prop["label_key"], lang),
@@ -3766,76 +3941,80 @@ async def admin_set_event_roles(interaction: discord.Interaction, db_id: int):
     await interaction.response.edit_message(embed=embed, view=view)
 
 
-async def admin_edit_event(interaction: discord.Interaction, db_id: int):
-    """Kick off a DM edit session for this event. Triggered by Admin → Edit."""
+async def _open_edit_session(interaction: discord.Interaction, *,
+                             target: "EditTarget", db_id, guild_id: int,
+                             lang: str, via_component: bool) -> None:
+    """Reserve a DM edit session for `target` and DM the user the overview.
+
+    `via_component=True` responds by editing the triggering message (used by
+    the Admin → Edit button); `False` responds with an ephemeral message
+    (used by slash commands).
+    """
     user = interaction.user
-    settings = db.get_guild_settings(interaction.guild_id) or {}
-    lang = settings.get("language", "en")
+
+    async def _respond(embed: discord.Embed):
+        if via_component:
+            await interaction.response.edit_message(embed=embed, view=None)
+        else:
+            await interaction.response.send_message(embed=embed, ephemeral=True)
 
     existing = _active_edit_sessions.get(user.id)
     if existing is not None:
         last = existing.get("last_activity", 0)
         if time.monotonic() - last < SESSION_STALE_AFTER_SECONDS:
-            # Genuinely active — block double-edits.
-            await interaction.response.edit_message(
-                embed=discord.Embed(description=t("edit.session_active", lang),
-                                    color=discord.Color.orange()),
-                view=None,
-            )
+            await _respond(discord.Embed(description=t("edit.session_active", lang),
+                                         color=discord.Color.orange()))
             return
-        # Stuck session: the view's on_timeout never fired. Clean up and
-        # let the user start fresh.
         await _force_close_stale_session(user.id)
 
-    record = db.get_event_by_db_id(interaction.guild_id, db_id)
-    if not record:
-        await interaction.response.edit_message(
-            embed=discord.Embed(description=t("event.no_event", lang), color=discord.Color.red()),
-            view=None,
-        )
+    obj = target.load(guild_id, db_id)
+    if obj is None:
+        await _respond(discord.Embed(description=t("event.no_event", lang),
+                                     color=discord.Color.red()))
         return
 
     try:
         dm = await user.create_dm()
     except discord.Forbidden:
-        await interaction.response.edit_message(
-            embed=discord.Embed(description=t("edit.dm_blocked", lang), color=discord.Color.red()),
-            view=None,
-        )
+        await _respond(discord.Embed(description=t("edit.dm_blocked", lang),
+                                     color=discord.Color.red()))
         return
 
-    # Reserve the session BEFORE the DM send so the view's callbacks can find it.
     session: dict = {
         "db_id": db_id,
-        "guild_id": interaction.guild_id,
+        "guild_id": guild_id,
         "lang": lang,
         "dm_message": None,
         "active_view": None,
         "last_activity": time.monotonic(),
+        "target": target,
+        "origin_channel_id": getattr(interaction, "channel_id", None),
     }
     _active_edit_sessions[user.id] = session
 
-    embed = _build_edit_main_embed(record["event"], db_id, interaction.guild_id, lang)
-    view = EditMainView(user.id, db_id, interaction.guild_id, lang)
+    embed = _build_edit_main_embed(obj, db_id, guild_id, lang, target=target)
+    view = EditMainView(user.id, db_id, guild_id, lang, target=target)
     try:
         dm_msg = await dm.send(embed=embed, view=view)
     except discord.Forbidden:
         _active_edit_sessions.pop(user.id, None)
-        await interaction.response.edit_message(
-            embed=discord.Embed(description=t("edit.dm_blocked", lang), color=discord.Color.red()),
-            view=None,
-        )
+        await _respond(discord.Embed(description=t("edit.dm_blocked", lang),
+                                     color=discord.Color.red()))
         return
     session["dm_message"] = dm_msg
     session["active_view"] = view
 
-    await interaction.response.edit_message(
-        embed=discord.Embed(
-            description=f"📨 {t('edit.dm_sent', lang)}",
-            color=discord.Color.green(),
-        ),
-        view=None,
-    )
+    await _respond(discord.Embed(description=f"📨 {t('edit.dm_sent', lang)}",
+                                 color=discord.Color.green()))
+
+
+async def admin_edit_event(interaction: discord.Interaction, db_id: int):
+    """Kick off a DM edit session for this event. Triggered by Admin → Edit."""
+    settings = db.get_guild_settings(interaction.guild_id) or {}
+    lang = settings.get("language", "en")
+    await _open_edit_session(interaction, target=_EVENT_TARGET, db_id=db_id,
+                             guild_id=interaction.guild_id, lang=lang,
+                             via_component=True)
 
 
 def _close_session(user_id: int) -> None:
@@ -3917,17 +4096,13 @@ async def _handle_edit_timeout(view: ui.View, user_id: int) -> None:
 
 
 async def _refresh_main_view(interaction: discord.Interaction, user_id: int,
-                             db_id: int, guild_id: int, lang: str,
+                             db_id, guild_id: int, lang: str,
                              updated_label: Optional[str] = None,
-                             via_modal: bool = False) -> None:
-    """Re-render the property selector after an edit or cancel.
-
-    `via_modal=True` means the originating interaction is a Modal submission,
-    in which case we ack the modal and edit the stored DM message directly
-    (interaction.response.edit_message doesn't apply to modal submits).
-    """
-    record = db.get_event_by_db_id(guild_id, db_id)
-    if not record:
+                             via_modal: bool = False, *,
+                             target: "EditTarget" = _EVENT_TARGET) -> None:
+    """Re-render the property selector after an edit or cancel."""
+    obj = target.load(guild_id, db_id)
+    if obj is None:
         _close_session(user_id)
         if via_modal:
             try:
@@ -3942,12 +4117,12 @@ async def _refresh_main_view(interaction: discord.Interaction, user_id: int,
             )
         return
 
-    embed = _build_edit_main_embed(record["event"], db_id, guild_id, lang, updated_label=updated_label)
-    view = EditMainView(user_id, db_id, guild_id, lang)
+    embed = _build_edit_main_embed(obj, db_id, guild_id, lang,
+                                   updated_label=updated_label, target=target)
+    view = EditMainView(user_id, db_id, guild_id, lang, target=target)
     _set_active_view(user_id, view)
 
     if via_modal:
-        # Acknowledge the modal silently, then edit the stored DM message.
         try:
             await interaction.response.defer()
         except discord.InteractionResponded:
@@ -3963,55 +4138,54 @@ async def _refresh_main_view(interaction: discord.Interaction, user_id: int,
 class EditMainView(ui.View):
     """Top-level DM view: a property dropdown + a Done button."""
 
-    def __init__(self, user_id: int, db_id: int, guild_id: int, lang: str):
+    def __init__(self, user_id: int, db_id, guild_id: int, lang: str, *,
+                 target: "EditTarget" = _EVENT_TARGET):
         super().__init__(timeout=600)
         self.user_id = user_id
         self.db_id = db_id
         self.guild_id = guild_id
         self.lang = lang
+        self.target = target
 
         options = [
-            discord.SelectOption(
-                label=t(prop["label_key"], lang)[:100],
-                value=prop["key"],
-            )
-            for prop in _EDIT_PROPERTIES
+            discord.SelectOption(label=t(prop["label_key"], lang)[:100], value=prop["key"])
+            for prop in target.properties
         ]
         select = ui.Select(
             placeholder=t("edit.pick_property_placeholder", lang),
-            options=options,
-            min_values=1, max_values=1,
+            options=options, min_values=1, max_values=1,
         )
         select.callback = self._on_select
         self.add_item(select)
 
         done = ui.Button(
             label=t("edit.done", lang),
-            style=discord.ButtonStyle.secondary,
-            emoji="🛑",
+            style=discord.ButtonStyle.secondary, emoji="🛑",
         )
         done.callback = self._on_done
         self.add_item(done)
 
     async def _on_select(self, interaction: discord.Interaction):
-        prop = _find_edit_property(interaction.data["values"][0])
+        key = interaction.data["values"][0]
+        prop = next((p for p in self.target.properties if p["key"] == key), None)
         if not prop:
             return
         await _show_property_editor(interaction, self.user_id, self.db_id,
-                                    self.guild_id, self.lang, prop)
+                                    self.guild_id, self.lang, prop, target=self.target)
 
     async def _on_done(self, interaction: discord.Interaction):
+        session = _active_edit_sessions.get(self.user_id) or {}
+        origin_channel_id = session.get("origin_channel_id")
         _close_session(self.user_id)
-        # Keep the overview embed visible; just strip the dropdown + Done
-        # button, then append the closing line as a new DM message below.
         try:
             await interaction.response.edit_message(view=None)
         except discord.HTTPException:
             pass
         text = t("edit.finished", self.lang)
-        url = _event_message_url(self.guild_id, self.db_id)
-        if url:
-            text = f"{text} [{t('edit.event_link', self.lang)}]({url})"
+        link = self.target.finish_link(self.guild_id, self.db_id,
+                                       origin_channel_id, self.lang)
+        if link:
+            text = f"{text} {link}"
         try:
             await interaction.channel.send(text)
         except discord.HTTPException:
@@ -4022,11 +4196,11 @@ class EditMainView(ui.View):
 
 
 async def _show_property_editor(interaction: discord.Interaction, user_id: int,
-                                db_id: int, guild_id: int, lang: str,
-                                prop: dict) -> None:
+                                db_id, guild_id: int, lang: str, prop: dict, *,
+                                target: "EditTarget" = _EVENT_TARGET) -> None:
     """Render the editor UI for a specific property, replacing the main view."""
-    record = db.get_event_by_db_id(guild_id, db_id)
-    if not record:
+    obj = target.load(guild_id, db_id)
+    if obj is None:
         _close_session(user_id)
         await interaction.response.edit_message(
             embed=discord.Embed(description=t("event.no_event", lang), color=discord.Color.red()),
@@ -4034,31 +4208,24 @@ async def _show_property_editor(interaction: discord.Interaction, user_id: int,
         )
         return
 
-    event = record["event"]
-    current = _read_event_property(event, prop["key"], prop["target"])
+    current = target.read(obj, prop)
     label = t(prop["label_key"], lang)
 
-    # The suggestion start time is only meaningful before the suggestion phase
-    # has opened — once `phase` advances, the scheduler has already consumed
-    # (or skipped) the timestamp, so editing it would have no effect.
-    if (prop["key"] == "suggestion_start_time"
-            and event.get("phase", "created") != "created"):
+    if (target.has_phase_lock and prop["key"] == "suggestion_start_time"
+            and obj.get("phase", "created") != "created"):
         await _bounce_to_main(interaction, user_id, db_id, guild_id, lang,
-                              t("edit.locked_phase", lang))
+                              t("edit.locked_phase", lang), target=target)
         return
 
     if prop["kind"] == "list":
-        # Maps and factions blacklists are scoped through the same source →
-        # category flow used by the suggest dialog, otherwise a single flat
-        # dropdown becomes unusable on sources with many maps/factions.
         if prop["key"] in ("blacklisted_maps", "blacklisted_factions"):
             await _show_scoped_blacklist_source_picker(
-                interaction, user_id, db_id, guild_id, lang, prop, event)
+                interaction, user_id, db_id, guild_id, lang, prop, obj, target=target)
             return
 
         choices = prop["source"]() if prop.get("source") else []
         if not choices:
-            fallback_view = EditMainView(user_id, db_id, guild_id, lang)
+            fallback_view = EditMainView(user_id, db_id, guild_id, lang, target=target)
             _set_active_view(user_id, fallback_view)
             await interaction.response.edit_message(
                 embed=discord.Embed(description=t("cache.empty", lang), color=discord.Color.orange()),
@@ -4067,33 +4234,27 @@ async def _show_property_editor(interaction: discord.Interaction, user_id: int,
             return
         visible = choices[:25]
         current_set = set(current or [])
-        # An empty `allowed_sources` means "all sources allowed" — preselect
-        # everything so the admin sees the effective state, mirroring the old
-        # /config_layer_sources behaviour.
         if prop["key"] == "allowed_sources" and not current_set:
             current_set = set(visible)
         initial_selected = current_set & set(visible)
 
-        view = EditListView(user_id, db_id, guild_id, lang, prop, visible, initial_selected)
+        view = EditListView(user_id, db_id, guild_id, lang, prop, visible,
+                            initial_selected, target=target)
         _set_active_view(user_id, view)
         await interaction.response.edit_message(
             embed=_edit_list_embed(prop, lang), view=view)
 
     elif prop["kind"] == "bool":
-        view = EditBoolView(user_id, db_id, guild_id, lang, prop, bool(current))
+        view = EditBoolView(user_id, db_id, guild_id, lang, prop, bool(current), target=target)
         _set_active_view(user_id, view)
         desc = t("edit.bool_prompt", lang, value=_format_property_value(current, "bool"))
         if prop.get("note_key"):
             desc = f"{desc}\n\n{t(prop['note_key'], lang)}"
-        embed = discord.Embed(
-            title=label,
-            description=desc,
-            color=discord.Color.blurple(),
-        )
+        embed = discord.Embed(title=label, description=desc, color=discord.Color.blurple())
         await interaction.response.edit_message(embed=embed, view=view)
 
     elif prop["kind"] == "string":
-        view = EditScalarView(user_id, db_id, guild_id, lang, prop)
+        view = EditScalarView(user_id, db_id, guild_id, lang, prop, target=target)
         _set_active_view(user_id, view)
         fallback = t("event.fallback_name", lang, db_id=db_id)
         desc = t(
@@ -4105,8 +4266,8 @@ async def _show_property_editor(interaction: discord.Interaction, user_id: int,
         embed = discord.Embed(title=label, description=desc, color=discord.Color.blurple())
         await interaction.response.edit_message(embed=embed, view=view)
 
-    else:  # int / duration / vote_duration / datetime — all go through a Modal
-        view = EditScalarView(user_id, db_id, guild_id, lang, prop)
+    else:  # int / duration / duration_str / vote_duration / datetime — via Modal
+        view = EditScalarView(user_id, db_id, guild_id, lang, prop, target=target)
         _set_active_view(user_id, view)
         if prop["kind"] == "int":
             desc = t("edit.int_prompt", lang,
@@ -4118,6 +4279,8 @@ async def _show_property_editor(interaction: discord.Interaction, user_id: int,
         else:
             desc = t("edit.duration_prompt", lang,
                      current=_format_property_value(current, prop["kind"]))
+        if prop.get("note_key"):
+            desc = f"{desc}\n\n{t(prop['note_key'], lang)}"
         embed = discord.Embed(title=label, description=desc, color=discord.Color.blurple())
         await interaction.response.edit_message(embed=embed, view=view)
 
@@ -4139,8 +4302,9 @@ class EditListView(ui.View):
     dropdown's checkmarks reflect the in-progress state when reopened.
     """
 
-    def __init__(self, user_id: int, db_id: int, guild_id: int, lang: str,
-                 prop: dict, choices: list[str], selected: set):
+    def __init__(self, user_id: int, db_id, guild_id: int, lang: str,
+                 prop: dict, choices: list[str], selected: set, *,
+                 target: "EditTarget" = _EVENT_TARGET):
         super().__init__(timeout=600)
         self.user_id = user_id
         self.db_id = db_id
@@ -4149,6 +4313,7 @@ class EditListView(ui.View):
         self.prop = prop
         self.choices = choices  # already truncated to <=25 by caller
         self.selected = set(selected)
+        self.target = target
 
         options = [
             discord.SelectOption(label=c[:100], value=c, default=(c in self.selected))
@@ -4180,7 +4345,7 @@ class EditListView(ui.View):
         self.selected = set(interaction.data.get("values", []))
         new_view = EditListView(
             self.user_id, self.db_id, self.guild_id, self.lang,
-            self.prop, self.choices, self.selected)
+            self.prop, self.choices, self.selected, target=self.target)
         _set_active_view(self.user_id, new_view)
         await interaction.response.edit_message(
             embed=_edit_list_embed(self.prop, self.lang), view=new_view)
@@ -4196,11 +4361,11 @@ class EditListView(ui.View):
                 and self.selected == set(self.choices)):
             new_value = []
         await _apply_edit(interaction, self.user_id, self.db_id, self.guild_id,
-                          self.lang, self.prop, new_value)
+                          self.lang, self.prop, new_value, target=self.target)
 
     async def _on_cancel(self, interaction: discord.Interaction):
         await _refresh_main_view(interaction, self.user_id, self.db_id,
-                                 self.guild_id, self.lang)
+                                 self.guild_id, self.lang, target=self.target)
 
     async def on_timeout(self):
         await _handle_edit_timeout(self, self.user_id)
@@ -4209,14 +4374,16 @@ class EditListView(ui.View):
 class EditBoolView(ui.View):
     """Two-button toggle for bool properties."""
 
-    def __init__(self, user_id: int, db_id: int, guild_id: int, lang: str,
-                 prop: dict, current_value: bool):
+    def __init__(self, user_id: int, db_id, guild_id: int, lang: str,
+                 prop: dict, current_value: bool, *,
+                 target: "EditTarget" = _EVENT_TARGET):
         super().__init__(timeout=600)
         self.user_id = user_id
         self.db_id = db_id
         self.guild_id = guild_id
         self.lang = lang
         self.prop = prop
+        self.target = target
 
         yes = ui.Button(
             label=t("edit.bool_yes", lang),
@@ -4244,12 +4411,12 @@ class EditBoolView(ui.View):
     def _make_setter(self, value: bool):
         async def cb(interaction: discord.Interaction):
             await _apply_edit(interaction, self.user_id, self.db_id, self.guild_id,
-                              self.lang, self.prop, value)
+                              self.lang, self.prop, value, target=self.target)
         return cb
 
     async def _on_cancel(self, interaction: discord.Interaction):
         await _refresh_main_view(interaction, self.user_id, self.db_id,
-                                 self.guild_id, self.lang)
+                                 self.guild_id, self.lang, target=self.target)
 
     async def on_timeout(self):
         await _handle_edit_timeout(self, self.user_id)
@@ -4262,14 +4429,15 @@ class EditScalarView(ui.View):
     chain Component → Modal rather than putting the TextInput in the view.
     """
 
-    def __init__(self, user_id: int, db_id: int, guild_id: int, lang: str,
-                 prop: dict):
+    def __init__(self, user_id: int, db_id, guild_id: int, lang: str,
+                 prop: dict, *, target: "EditTarget" = _EVENT_TARGET):
         super().__init__(timeout=600)
         self.user_id = user_id
         self.db_id = db_id
         self.guild_id = guild_id
         self.lang = lang
         self.prop = prop
+        self.target = target
 
         edit = ui.Button(
             label=t("edit.open_input", lang),
@@ -4293,12 +4461,12 @@ class EditScalarView(ui.View):
         else:
             modal_cls = EditScalarModal
         modal = modal_cls(self.user_id, self.db_id, self.guild_id,
-                          self.lang, self.prop)
+                          self.lang, self.prop, target=self.target)
         await interaction.response.send_modal(modal)
 
     async def _on_cancel(self, interaction: discord.Interaction):
         await _refresh_main_view(interaction, self.user_id, self.db_id,
-                                 self.guild_id, self.lang)
+                                 self.guild_id, self.lang, target=self.target)
 
     async def on_timeout(self):
         await _handle_edit_timeout(self, self.user_id)
@@ -4311,14 +4479,15 @@ class EditDateTimeModal(ui.Modal):
     semantics from the creation wizard (bot.py — EventScheduleModal).
     """
 
-    def __init__(self, user_id: int, db_id: int, guild_id: int, lang: str,
-                 prop: dict):
+    def __init__(self, user_id: int, db_id, guild_id: int, lang: str,
+                 prop: dict, *, target: "EditTarget" = _EVENT_TARGET):
         super().__init__(title=t(prop["label_key"], lang)[:45])
         self.user_id = user_id
         self.db_id = db_id
         self.guild_id = guild_id
         self.lang = lang
         self.prop = prop
+        self.target = target
 
         self.value_input = ui.TextInput(
             label=t("edit.input_label", lang)[:45],
@@ -4342,20 +4511,21 @@ class EditDateTimeModal(ui.Modal):
                 )
                 return
         await _apply_edit(interaction, self.user_id, self.db_id, self.guild_id,
-                          self.lang, self.prop, value, via_modal=True)
+                          self.lang, self.prop, value, via_modal=True, target=self.target)
 
 
 class EditScalarModal(ui.Modal):
     """Text-input modal for int / duration properties."""
 
-    def __init__(self, user_id: int, db_id: int, guild_id: int, lang: str,
-                 prop: dict):
+    def __init__(self, user_id: int, db_id, guild_id: int, lang: str,
+                 prop: dict, *, target: "EditTarget" = _EVENT_TARGET):
         super().__init__(title=t(prop["label_key"], lang)[:45])
         self.user_id = user_id
         self.db_id = db_id
         self.guild_id = guild_id
         self.lang = lang
         self.prop = prop
+        self.target = target
 
         if prop["kind"] == "int":
             placeholder = f"{prop.get('min', 0)}–{prop.get('max', '?')}"
@@ -4364,7 +4534,7 @@ class EditScalarModal(ui.Modal):
         self.value_input = ui.TextInput(
             label=t("edit.input_label", lang)[:45],
             placeholder=placeholder,
-            required=True,
+            required=prop["kind"] != "duration_str",
             max_length=20,
         )
         self.add_item(self.value_input)
@@ -4392,6 +4562,12 @@ class EditScalarModal(ui.Modal):
                 await interaction.response.send_message(
                     t("phase.invalid_duration", self.lang, value=raw), ephemeral=True)
                 return
+        elif self.prop["kind"] == "duration_str":
+            ok, value = validate_duration_str(raw)
+            if not ok:
+                await interaction.response.send_message(
+                    t("phase.invalid_duration", self.lang, value=raw), ephemeral=True)
+                return
         else:  # duration
             value = parse_duration_to_seconds(raw)
             if value is None:
@@ -4400,7 +4576,7 @@ class EditScalarModal(ui.Modal):
                 return
 
         await _apply_edit(interaction, self.user_id, self.db_id, self.guild_id,
-                          self.lang, self.prop, value, via_modal=True)
+                          self.lang, self.prop, value, via_modal=True, target=self.target)
 
 
 class EditStringModal(ui.Modal):
@@ -4410,14 +4586,15 @@ class EditStringModal(ui.Modal):
     display to the `Event #{db_id}` fallback.
     """
 
-    def __init__(self, user_id: int, db_id: int, guild_id: int, lang: str,
-                 prop: dict):
+    def __init__(self, user_id: int, db_id, guild_id: int, lang: str,
+                 prop: dict, *, target: "EditTarget" = _EVENT_TARGET):
         super().__init__(title=t(prop["label_key"], lang)[:45])
         self.user_id = user_id
         self.db_id = db_id
         self.guild_id = guild_id
         self.lang = lang
         self.prop = prop
+        self.target = target
 
         self.value_input = ui.TextInput(
             label=t("edit.input_label", lang)[:45],
@@ -4429,7 +4606,7 @@ class EditStringModal(ui.Modal):
     async def on_submit(self, interaction: discord.Interaction):
         value = normalize_event_name(self.value_input.value)
         await _apply_edit(interaction, self.user_id, self.db_id, self.guild_id,
-                          self.lang, self.prop, value, via_modal=True)
+                          self.lang, self.prop, value, via_modal=True, target=self.target)
 
 
 # ───────────────────────────────────────────────────────────────────────────
@@ -4443,10 +4620,11 @@ class EditStringModal(ui.Modal):
 # ───────────────────────────────────────────────────────────────────────────
 
 async def _bounce_to_main(interaction: discord.Interaction, user_id: int,
-                          db_id: int, guild_id: int, lang: str,
-                          message: str) -> None:
+                          db_id, guild_id: int, lang: str,
+                          message: str, *,
+                          target: "EditTarget" = _EVENT_TARGET) -> None:
     """Show a brief notice and reattach the main edit view."""
-    fallback_view = EditMainView(user_id, db_id, guild_id, lang)
+    fallback_view = EditMainView(user_id, db_id, guild_id, lang, target=target)
     _set_active_view(user_id, fallback_view)
     await interaction.response.edit_message(
         embed=discord.Embed(description=message, color=discord.Color.orange()),
@@ -4455,27 +4633,23 @@ async def _bounce_to_main(interaction: discord.Interaction, user_id: int,
 
 
 async def _show_scoped_blacklist_source_picker(
-        interaction: discord.Interaction, user_id: int, db_id: int,
-        guild_id: int, lang: str, prop: dict, event: dict) -> None:
-    """Step 1 of the scoped blacklist edit: pick a source.
-
-    Skips straight to the editor when only one source is available, matching
-    the suggest flow's behaviour.
-    """
-    settings = db.get_guild_settings(guild_id) or {}
-    sources = _resolve_event_sources(event, settings)
+        interaction: discord.Interaction, user_id: int, db_id,
+        guild_id: int, lang: str, prop: dict, obj: dict, *,
+        target: "EditTarget" = _EVENT_TARGET) -> None:
+    """Step 1 of the scoped blacklist edit: pick a source."""
+    sources = target.scope_sources(obj, guild_id)
 
     if not sources:
         await _bounce_to_main(interaction, user_id, db_id, guild_id, lang,
-                              t("cache.empty", lang))
+                              t("cache.empty", lang), target=target)
         return
 
     if len(sources) == 1:
         await _show_scoped_blacklist_editor(
-            interaction, user_id, db_id, guild_id, lang, prop, sources[0])
+            interaction, user_id, db_id, guild_id, lang, prop, sources[0], target=target)
         return
 
-    view = ScopedBlacklistSourceView(user_id, db_id, guild_id, lang, prop, sources)
+    view = ScopedBlacklistSourceView(user_id, db_id, guild_id, lang, prop, sources, target=target)
     _set_active_view(user_id, view)
     embed = discord.Embed(
         title=t(prop["label_key"], lang),
@@ -4496,8 +4670,9 @@ def _scoped_blacklist_embed(prop: dict, source: str, lang: str) -> discord.Embed
 
 
 async def _show_scoped_blacklist_editor(
-        interaction: discord.Interaction, user_id: int, db_id: int,
-        guild_id: int, lang: str, prop: dict, source: str) -> None:
+        interaction: discord.Interaction, user_id: int, db_id,
+        guild_id: int, lang: str, prop: dict, source: str, *,
+        target: "EditTarget" = _EVENT_TARGET) -> None:
     """Fresh entry into the bucketed picker.
 
     Builds the buckets from current DB state and snapshots the existing
@@ -4505,12 +4680,11 @@ async def _show_scoped_blacklist_editor(
     Select interactions mutate that buffer in place; nothing is written to
     the DB until they press Fertig.
     """
-    record = db.get_event_by_db_id(guild_id, db_id)
-    if not record:
+    obj = target.load(guild_id, db_id)
+    if obj is None:
         await _notify_event_gone(interaction, user_id, lang)
         return
-    event = record["event"]
-    blacklist = _read_event_property(event, prop["key"], prop["target"]) or []
+    blacklist = target.read(obj, prop) or []
     bl_set = set(blacklist)
     source_filter = [source] if source else None
 
@@ -4518,7 +4692,7 @@ async def _show_scoped_blacklist_editor(
         maps = db.get_unique_maps(allowed_sources=source_filter)
         if not maps:
             await _bounce_to_main(interaction, user_id, db_id, guild_id, lang,
-                                  t("cache.empty", lang))
+                                  t("cache.empty", lang), target=target)
             return
         sizes = db.get_map_sizes(allowed_sources=source_filter)
         groups = _group_maps_by_size(maps, sizes)
@@ -4532,7 +4706,7 @@ async def _show_scoped_blacklist_editor(
         factions = db.get_unique_factions(allowed_sources=source_filter)
         if not factions:
             await _bounce_to_main(interaction, user_id, db_id, guild_id, lang,
-                                  t("cache.empty", lang))
+                                  t("cache.empty", lang), target=target)
             return
         buckets = [{
             "placeholder": t("edit.list_placeholder", lang),
@@ -4540,7 +4714,7 @@ async def _show_scoped_blacklist_editor(
             "selected": {f for f in factions[:25] if f in bl_set},
         }]
 
-    view = ScopedBlacklistView(user_id, db_id, guild_id, lang, prop, source, buckets)
+    view = ScopedBlacklistView(user_id, db_id, guild_id, lang, prop, source, buckets, target=target)
     _set_active_view(user_id, view)
     await interaction.response.edit_message(
         embed=_scoped_blacklist_embed(prop, source, lang), view=view)
@@ -4549,14 +4723,16 @@ async def _show_scoped_blacklist_editor(
 class ScopedBlacklistSourceView(ui.View):
     """Source picker for blacklisted_maps / blacklisted_factions edits."""
 
-    def __init__(self, user_id: int, db_id: int, guild_id: int, lang: str,
-                 prop: dict, sources: list[str]):
+    def __init__(self, user_id: int, db_id, guild_id: int, lang: str,
+                 prop: dict, sources: list[str], *,
+                 target: "EditTarget" = _EVENT_TARGET):
         super().__init__(timeout=600)
         self.user_id = user_id
         self.db_id = db_id
         self.guild_id = guild_id
         self.lang = lang
         self.prop = prop
+        self.target = target
 
         options = [discord.SelectOption(label=s[:100], value=s) for s in sources[:25]]
         select = ui.Select(
@@ -4577,11 +4753,11 @@ class ScopedBlacklistSourceView(ui.View):
         source = interaction.data["values"][0]
         await _show_scoped_blacklist_editor(
             interaction, self.user_id, self.db_id, self.guild_id, self.lang,
-            self.prop, source)
+            self.prop, source, target=self.target)
 
     async def _on_cancel(self, interaction: discord.Interaction):
         await _refresh_main_view(interaction, self.user_id, self.db_id,
-                                 self.guild_id, self.lang)
+                                 self.guild_id, self.lang, target=self.target)
 
     async def on_timeout(self):
         await _handle_edit_timeout(self, self.user_id)
@@ -4598,8 +4774,9 @@ class ScopedBlacklistView(ui.View):
     Pressing Abbrechen discards the buffer; the original blacklist stays.
     """
 
-    def __init__(self, user_id: int, db_id: int, guild_id: int, lang: str,
-                 prop: dict, source: str, buckets: list):
+    def __init__(self, user_id: int, db_id, guild_id: int, lang: str,
+                 prop: dict, source: str, buckets: list, *,
+                 target: "EditTarget" = _EVENT_TARGET):
         super().__init__(timeout=600)
         self.user_id = user_id
         self.db_id = db_id
@@ -4608,6 +4785,7 @@ class ScopedBlacklistView(ui.View):
         self.prop = prop
         self.source = source
         self.buckets = buckets
+        self.target = target
 
         for i, bucket in enumerate(buckets):
             items = bucket["items"]
@@ -4655,7 +4833,7 @@ class ScopedBlacklistView(ui.View):
 
             new_view = ScopedBlacklistView(
                 self.user_id, self.db_id, self.guild_id, self.lang,
-                self.prop, self.source, self.buckets)
+                self.prop, self.source, self.buckets, target=self.target)
             _set_active_view(self.user_id, new_view)
             await interaction.response.edit_message(
                 embed=_scoped_blacklist_embed(self.prop, self.source, self.lang),
@@ -4678,49 +4856,35 @@ class ScopedBlacklistView(ui.View):
             return sorted((set(current or []) - scope) | selected)
 
         ok = await _persist_property_value(
-            self.guild_id, self.db_id, self.prop, transform)
+            self.guild_id, self.db_id, self.prop, transform, target=self.target)
         if not ok:
             await _notify_event_gone(interaction, self.user_id, self.lang)
             return
         label = t(self.prop["label_key"], self.lang)
         await _refresh_main_view(interaction, self.user_id, self.db_id,
-                                 self.guild_id, self.lang, updated_label=label)
+                                 self.guild_id, self.lang, updated_label=label,
+                                 target=self.target)
 
     async def _on_cancel(self, interaction: discord.Interaction):
         # Buffer is discarded simply by navigating away — it lives on this
         # view and is not persisted anywhere else.
         await _refresh_main_view(interaction, self.user_id, self.db_id,
-                                 self.guild_id, self.lang)
+                                 self.guild_id, self.lang, target=self.target)
 
     async def on_timeout(self):
         await _handle_edit_timeout(self, self.user_id)
 
 
-async def _persist_property_value(guild_id: int, db_id: int, prop: dict,
-                                   value_or_transform) -> bool:
-    """Persist a property value under the guild lock, then refresh the embed.
+async def _persist_property_value(guild_id: int, db_id, prop: dict,
+                                   value_or_transform, *,
+                                   target: "EditTarget" = _EVENT_TARGET) -> bool:
+    """Persist a property value via the target (lock + write + optional refresh).
 
-    `value_or_transform` may be a value, or a callable receiving the current
-    value and returning the new one — invoked inside the lock so the
-    read-modify-write is atomic against concurrent edits. Returns False when
-    the event has been deleted under us; the caller is responsible for
-    surfacing that to the user.
+    `value_or_transform` may be a value or a callable receiving the current
+    value (invoked inside the lock for atomicity). Returns False when the
+    underlying object is gone (event deleted); guild persist always returns True.
     """
-    lock = _get_guild_lock(guild_id)
-    async with lock:
-        record = db.get_event_by_db_id(guild_id, db_id)
-        if not record:
-            return False
-        event = record["event"]
-        if callable(value_or_transform):
-            current = _read_event_property(event, prop["key"], prop["target"])
-            value = value_or_transform(current)
-        else:
-            value = value_or_transform
-        _write_event_property(event, prop["key"], prop["target"], value)
-        db.save_event(record["db_id"], event)
-    await _update_event_embed(db_id)
-    return True
+    return await target.persist(guild_id, db_id, prop, value_or_transform)
 
 
 async def _notify_event_gone(interaction: discord.Interaction, user_id: int,
@@ -4742,15 +4906,16 @@ async def _notify_event_gone(interaction: discord.Interaction, user_id: int,
 
 
 async def _apply_edit(interaction: discord.Interaction, user_id: int,
-                      db_id: int, guild_id: int, lang: str,
-                      prop: dict, value, via_modal: bool = False) -> None:
-    """Persist an edit, refresh the public event embed, return to main view."""
-    if not await _persist_property_value(guild_id, db_id, prop, value):
+                      db_id, guild_id: int, lang: str,
+                      prop: dict, value, via_modal: bool = False, *,
+                      target: "EditTarget" = _EVENT_TARGET) -> None:
+    """Persist an edit, refresh the embed, return to the main view."""
+    if not await _persist_property_value(guild_id, db_id, prop, value, target=target):
         await _notify_event_gone(interaction, user_id, lang, via_modal=via_modal)
         return
     label = t(prop["label_key"], lang)
     await _refresh_main_view(interaction, user_id, db_id, guild_id, lang,
-                             updated_label=label, via_modal=via_modal)
+                             updated_label=label, via_modal=via_modal, target=target)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -5005,6 +5170,21 @@ async def cmd_refresh_layers(interaction: discord.Interaction):
     except Exception as e:
         logger.error(f"Error refreshing layers: {e}")
         await interaction.followup.send(t("cache.error", lang, error=str(e)), ephemeral=True)
+
+
+@bot.tree.command(name="config_defaults",
+                  description="Edit the default settings new events start from (organizer only)")
+async def cmd_config_defaults(interaction: discord.Interaction):
+    """Open the guild-defaults DM editor (same dialog as Admin → Edit)."""
+    settings = await check_guild_configured(interaction)
+    if not settings:
+        return
+    if not await check_organizer(interaction, settings):
+        return
+    lang = settings.get("language", "en")
+    await _open_edit_session(interaction, target=_GUILD_TARGET, db_id=None,
+                             guild_id=interaction.guild_id, lang=lang,
+                             via_component=False)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

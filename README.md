@@ -30,7 +30,7 @@ Events are driven from the **Admin panel** (the `Admin` button on the event embe
 
 ## Commands
 
-discord.py registers **12 slash commands**, in three permission tiers. Per-event configuration (gamemodes, blacklists, suggestion limits, voting parameters) and phase transitions are **not** slash commands — they live in the **Admin panel** and the **Edit Event** DM dialog (see [Interactive Buttons](#interactive-buttons-on-event-embed)).
+discord.py registers **13 slash commands**, in three permission tiers. Per-event configuration (gamemodes, blacklists, suggestion limits, voting parameters) and phase transitions are **not** slash commands — they live in the **Admin panel** and the **Edit Event** DM dialog (see [Interactive Buttons](#interactive-buttons-on-event-embed)).
 
 ### Setup (Discord Admin)
 
@@ -52,6 +52,7 @@ discord.py registers **12 slash commands**, in three permission tiers. Per-event
 | `/refresh_layers` | Re-fetch layer data from GitHub |
 | `/history_add` | Manually add a previously played layer to the history |
 | `/history_remove` | Remove an entry from the voting history |
+| `/config_defaults` | Edit the guild-wide defaults new events start from (opens the same DM dialog as Admin → Edit Event); changes affect **only newly created events** |
 
 ### User
 
@@ -95,9 +96,10 @@ python bot.py
 
 1. Run `/setup` with organizer role, log channel, and language
 2. Run `/refresh_layers` to populate the layer cache (auto-fetched on first start)
-3. Create an event with `/create_layer_suggestion`
-4. Open the event's **Admin → Edit Event** dialog to adjust gamemodes, blacklists, and suggestion/voting limits (optional — sensible defaults apply)
-5. Optionally gate the event to specific roles/users via **Admin → Edit Allow-list**
+3. Optionally run `/config_defaults` to set the guild-wide defaults that new events will start from (gamemodes, blacklists, voting parameters, etc.)
+4. Create an event with `/create_layer_suggestion`
+5. Open the event's **Admin → Edit Event** dialog to tweak that event's config if needed (optional — sensible defaults apply)
+6. Optionally gate the event to specific roles/users via **Admin → Edit Allow-list**
 
 ## Configuration
 
@@ -112,7 +114,7 @@ python bot.py
 | `PUID` | No | Docker user ID (default: 1000) |
 | `PGID` | No | Docker group ID (default: 1000) |
 
-### Guild Settings (via `/setup` and the Admin → Edit Event dialog)
+### Guild Settings (via `/setup`, `/config_defaults`, and the Admin → Edit Event dialog)
 
 | Setting | Default | Description |
 |---------|---------|-------------|

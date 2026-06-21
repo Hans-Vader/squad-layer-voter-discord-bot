@@ -115,6 +115,48 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "Allowed layer sources updated: {sources}",
     },
 
+    # ── Guild defaults editor (/config_defaults) ──────────────────────────────
+    "config_defaults.title": {
+        "de": "Standardwerte für neue Events",
+        "en": "Defaults for new events",
+    },
+    "config_defaults.dm_intro": {
+        "de": ("Bearbeite die Standardwerte, die für **neue** Events verwendet "
+               "werden. Bestehende Events bleiben unverändert."),
+        "en": ("Edit the defaults applied to **new** events. Existing events "
+               "are unaffected."),
+    },
+    "config_defaults.prop.voting_duration": {
+        "de": "Standard-Abstimmungsdauer",
+        "en": "Default Voting Duration",
+    },
+    "config_defaults.prop.max_voting_layers": {
+        "de": "Standard-Max. Abstimmungs-Layer",
+        "en": "Default Max Voting Layers",
+    },
+    "config_defaults.prop.allow_multiple_votes": {
+        "de": "Standard-Mehrfachauswahl",
+        "en": "Default Multiple-Choice Voting",
+    },
+    "config_defaults.prop.mirror_match": {
+        "de": "Standard-Mirror Match",
+        "en": "Default Mirror Match",
+    },
+    "config_defaults.prop.suggestion_duration": {
+        "de": "Standard-Vorschlagsdauer",
+        "en": "Default Suggestion Duration",
+    },
+    "config_defaults.prop.suggestion_start": {
+        "de": "Standard-Vorschlagsstart (Versatz)",
+        "en": "Default Suggestion Start (offset)",
+    },
+    "config_defaults.prop.suggestion_start_note": {
+        "de": ("Versatz ab Erstellungszeit (z. B. `1h` = Vorschläge öffnen 1 "
+               "Stunde nach Erstellung). Leer = manuell."),
+        "en": ("Offset from creation time (e.g. `1h` = suggestions open 1 hour "
+               "after creation). Empty = manual."),
+    },
+
     # ── Layer cache ───────────────────────────────────────────────────────
     "cache.refreshing": {
         "de": "Layer-Daten werden aktualisiert...",
@@ -967,6 +1009,10 @@ _STRINGS: dict[str, dict[str, str]] = {
     "edit.event_link": {
         "de": "Zum Event",
         "en": "Go to event",
+    },
+    "edit.config_defaults_link": {
+        "de": "Zurück zum Kanal",
+        "en": "Back to channel",
     },
     "edit.timeout": {
         "de": "Ich bin mir nicht sicher, wohin du gegangen bist. Wir können es später erneut versuchen.",

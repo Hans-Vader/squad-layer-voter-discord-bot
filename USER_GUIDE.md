@@ -69,6 +69,32 @@ Per-event settings live in the **Admin → Edit Event** DM dialog (open the even
 
 These are snapshotted per event when it is created, so changing one event never affects another. To gate **who** may participate, use **Admin → Edit Allow-list**.
 
+### Setting Guild-Wide Defaults (`/config_defaults`)
+
+`/config_defaults` (organizer-only) opens a DM dialog that is **identical to Admin → Edit Event**, but it edits the **guild-wide defaults** that every new event starts from instead of a specific event.
+
+Fields available in the dialog:
+
+| Setting | What it does |
+|---------|-------------|
+| Game modes | Which modes are enabled by default (AAS, RAAS, etc.) |
+| Blacklisted maps | Maps blocked from suggestions in new events |
+| Blacklisted factions | Factions excluded from suggestions |
+| Blacklisted units | Unit types excluded from suggestions |
+| Max suggestions per user | Default per-user suggestion limit (1–10) |
+| Max total suggestions | Default total suggestion cap (1–25) |
+| Max self-removals per user | Default limit for how many times each user may remove their own suggestions (0 disables the Remove Suggestion button) |
+| History lookback | How many past events to block layers from |
+| Layer sources | Which layer data sets to draw from (standard, supermod, etc.) |
+| Voting duration | Default poll duration |
+| Max voting layers | Default maximum number of layers in the poll |
+| Multiple-choice voting | Whether the poll allows multiple votes by default |
+| Mirror Match | Whether Mirror Match is on by default |
+| Suggestion duration | Default suggestion phase length |
+| Suggestion start offset | Default offset before suggestions open |
+
+> **Important:** changes made here apply only to **newly created events**. Existing events keep the snapshot they captured at creation and are not affected. The one exception is the **layer-source cap**: the bot applies that live across all events.
+
 ### Running an Event
 
 **Step 1: Create**
@@ -115,7 +141,7 @@ Click the **"Admin"** button on the event embed for quick actions:
 
 ### Viewing Settings
 
-There is no `/settings` command. Server-wide values (organizer role, log channel, language) are set with `/setup` (and `/set_organizer_role`, `/set_language`, `/set_log_channel`); per-event configuration is shown and edited in the **Admin → Edit Event** dialog.
+There is no `/settings` command. Server-wide values (organizer role, log channel, language) are set with `/setup` (and `/set_organizer_role`, `/set_language`, `/set_log_channel`); guild-wide event defaults are managed with `/config_defaults`; per-event configuration is shown and edited in the **Admin → Edit Event** dialog.
 
 ---
 
