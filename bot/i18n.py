@@ -1010,6 +1010,10 @@ _STRINGS: dict[str, dict[str, str]] = {
         "de": "Zum Event",
         "en": "Go to event",
     },
+    "edit.config_defaults_link": {
+        "de": "Zurück zum Kanal",
+        "en": "Back to channel",
+    },
     "edit.timeout": {
         "de": "Ich bin mir nicht sicher, wohin du gegangen bist. Wir können es später erneut versuchen.",
         "en": "I'm not sure where you went. We can try again later.",

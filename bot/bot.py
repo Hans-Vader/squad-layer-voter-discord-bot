@@ -3769,7 +3769,10 @@ class EditTarget:
     kind = ""
     properties: list[dict] = []
     has_phase_lock = False
-    shows_event_link = False
+
+    def finish_link(self, guild_id, db_id, channel_id, lang) -> Optional[str]:
+        """Markdown `[label](url)` appended to the Done message, or None."""
+        return None
 
     def load(self, guild_id: int, db_id):
         raise NotImplementedError
@@ -3797,7 +3800,10 @@ class EventEditTarget(EditTarget):
     kind = "event"
     properties = _EDIT_PROPERTIES
     has_phase_lock = True
-    shows_event_link = True
+
+    def finish_link(self, guild_id, db_id, channel_id, lang):
+        url = _event_message_url(guild_id, db_id)
+        return f"[{t('edit.event_link', lang)}]({url})" if url else None
 
     def load(self, guild_id, db_id):
         record = db.get_event_by_db_id(guild_id, db_id)
@@ -3837,7 +3843,14 @@ class GuildEditTarget(EditTarget):
     kind = "guild"
     properties = _GUILD_EDIT_PROPERTIES
     has_phase_lock = False
-    shows_event_link = False
+
+    def finish_link(self, guild_id, db_id, channel_id, lang):
+        # No event message to point at — link back to the channel where
+        # /config_defaults was run, the analog of the per-event "Go to event".
+        if not channel_id:
+            return None
+        url = f"https://discord.com/channels/{guild_id}/{channel_id}"
+        return f"[{t('edit.config_defaults_link', lang)}]({url})"
 
     def load(self, guild_id, db_id):
         return db.get_guild_settings(guild_id) or dict(db.DEFAULT_GUILD_SETTINGS)
@@ -3975,6 +3988,7 @@ async def _open_edit_session(interaction: discord.Interaction, *,
         "active_view": None,
         "last_activity": time.monotonic(),
         "target": target,
+        "origin_channel_id": getattr(interaction, "channel_id", None),
     }
     _active_edit_sessions[user.id] = session
 
@@ -4160,16 +4174,18 @@ class EditMainView(ui.View):
                                     self.guild_id, self.lang, prop, target=self.target)
 
     async def _on_done(self, interaction: discord.Interaction):
+        session = _active_edit_sessions.get(self.user_id) or {}
+        origin_channel_id = session.get("origin_channel_id")
         _close_session(self.user_id)
         try:
             await interaction.response.edit_message(view=None)
         except discord.HTTPException:
             pass
         text = t("edit.finished", self.lang)
-        if self.target.shows_event_link:
-            url = _event_message_url(self.guild_id, self.db_id)
-            if url:
-                text = f"{text} [{t('edit.event_link', self.lang)}]({url})"
+        link = self.target.finish_link(self.guild_id, self.db_id,
+                                       origin_channel_id, self.lang)
+        if link:
+            text = f"{text} {link}"
         try:
             await interaction.channel.send(text)
         except discord.HTTPException:

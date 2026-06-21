@@ -40,3 +40,10 @@ def test_apply_guild_property_accepts_transform(temp_db):
     botmod._apply_guild_property(
         3, {"key": "blacklisted_units"}, lambda cur: sorted((set(cur or []) | {"B"})))
     assert db.get_guild_settings(3)["blacklisted_units"] == ["A", "B"]
+
+
+def test_guild_target_finish_link():
+    # Links back to the originating channel; None when no channel is known.
+    assert botmod._GUILD_TARGET.finish_link(111, None, 222, "en") == \
+        "[Back to channel](https://discord.com/channels/111/222)"
+    assert botmod._GUILD_TARGET.finish_link(111, None, None, "en") is None
