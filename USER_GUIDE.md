@@ -83,6 +83,7 @@ Fields available in the dialog:
 | Blacklisted units | Unit types excluded from suggestions |
 | Max suggestions per user | Default per-user suggestion limit (1–10) |
 | Max total suggestions | Default total suggestion cap (1–25) |
+| Max self-removals per user | Default limit for how many times each user may remove their own suggestions (0 disables the Remove Suggestion button) |
 | History lookback | How many past events to block layers from |
 | Layer sources | Which layer data sets to draw from (standard, supermod, etc.) |
 | Voting duration | Default poll duration |
