@@ -76,6 +76,7 @@ DEFAULT_GUILD_SETTINGS = {
     "default_voting_duration_hours": 24,
     "default_allow_multiple_votes": False,
     "default_mirror_match": False,
+    "default_max_voting_layers": 10,
 }
 
 
@@ -741,7 +742,8 @@ def build_default_event(suggestion_start_time=None,
         "voting_start_time": None,
         "voting_duration_hours": 24,
         "poll_message_id": None,
-        "max_voting_layers": 10,
+        "max_voting_layers": int((settings or DEFAULT_GUILD_SETTINGS)
+                                 .get("default_max_voting_layers", 10) or 10),
         "selected_for_vote": [],
         "winning_layer": None,
         "allow_multiple_votes": False,
