@@ -3890,11 +3890,11 @@ def _build_edit_main_embed(obj: dict, db_id, guild_id: int, lang: str,
         description=target.overview_description(lang),
         color=discord.Color.blurple(),
     )
-    for prop in target.properties:
+    for num, prop in enumerate(target.properties, 1):
         value = target.read(obj, prop)
         formatted = _format_property_value(value, prop["kind"])
         embed.add_field(
-            name=t(prop["label_key"], lang),
+            name=f"{num}. {t(prop['label_key'], lang)}",
             value=f"`{formatted}`",
             inline=True,
         )
@@ -4004,7 +4004,8 @@ async def _open_edit_session(interaction: discord.Interaction, *,
     session["dm_message"] = dm_msg
     session["active_view"] = view
 
-    await _respond(discord.Embed(description=f"📨 {t('edit.dm_sent', lang)}",
+    link = f"\n[{t('edit.dm_open_link', lang)}]({dm_msg.jump_url})"
+    await _respond(discord.Embed(description=f"📨 {t('edit.dm_sent', lang)}{link}",
                                  color=discord.Color.green()))
 
 
@@ -4148,8 +4149,8 @@ class EditMainView(ui.View):
         self.target = target
 
         options = [
-            discord.SelectOption(label=t(prop["label_key"], lang)[:100], value=prop["key"])
-            for prop in target.properties
+            discord.SelectOption(label=f"{num}. {t(prop['label_key'], lang)}"[:100], value=prop["key"])
+            for num, prop in enumerate(target.properties, 1)
         ]
         select = ui.Select(
             placeholder=t("edit.pick_property_placeholder", lang),

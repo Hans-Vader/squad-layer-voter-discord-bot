@@ -990,6 +990,10 @@ _STRINGS: dict[str, dict[str, str]] = {
         "de": "Bearbeitungsdialog wurde dir per DM geschickt.",
         "en": "Edit dialog sent to your DMs.",
     },
+    "edit.dm_open_link": {
+        "de": "Zum Bearbeitungsdialog springen",
+        "en": "Open the edit dialog",
+    },
     "edit.dm_blocked": {
         "de": "Konnte keine DM senden — bitte erlaube DMs von Server-Mitgliedern.",
         "en": "Couldn't open a DM — please allow DMs from server members.",
