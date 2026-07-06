@@ -505,35 +505,6 @@ def _event_uses_supermod(event: dict, settings: dict) -> bool:
     return _SUPERMOD_SOURCE in candidate
 
 
-def _split_entries_evenly(entries: list[str], max_len: int = 1024) -> list[str]:
-    """Distribute entries across the minimum number of embed fields needed
-    so each field's joined value fits within ``max_len`` characters, with
-    chunks balanced as evenly as possible by entry count.
-
-    For N entries split into K fields, the first ``N % K`` fields get one
-    extra entry — so e.g. 8 → [4, 4], 10 → [4, 3, 3], 9 → [5, 4].
-    """
-    n = len(entries)
-    if n == 0:
-        return []
-    for k in range(1, n + 1):
-        base, extra = divmod(n, k)
-        chunks: list[str] = []
-        i = 0
-        ok = True
-        for j in range(k):
-            size = base + (1 if j < extra else 0)
-            value = "\n".join(entries[i:i + size])
-            if len(value) > max_len:
-                ok = False
-                break
-            chunks.append(value)
-            i += size
-        if ok:
-            return chunks
-    return list(entries)
-
-
 def fit_lines_to_field(lines: list[str],
                        more_label: Callable[[int], str],
                        max_len: int = 1024) -> str:
@@ -659,39 +630,34 @@ def build_event_embed(event: dict, settings: dict, db_id: int,
                     for rank, s in enumerate(ballot, 1)
                 ]
                 header = f"📋 {t('embed.live_results_header', lang)}"
-                rendered_total = len(ballot)
             else:
                 entries = [
                     format_suggestion_entry(i, s)
                     for i, s in enumerate(suggestions, 1)
                 ]
                 header = f"📋 {t('embed.suggestions_header', lang)} ({len(suggestions)}/{max_total})"
-                rendered_total = len(suggestions)
 
-            # Distribute entries evenly across the minimum number of fields
-            # needed (each ≤1024 chars), so e.g. 8 long entries render as
-            # 4+4 rather than 3+4+1.
-            fields = _split_entries_evenly(entries)
-
-            # Add fields — first gets the header, continuations use zero-width space
-            for idx, field_value in enumerate(fields):
+            # One embed field per entry so Discord spaces them uniformly — a
+            # shared field that packs entries together gaps only at
+            # its boundaries, which looks uneven. Guarded against Discord's
+            # 25-field and 6000-char embed caps: on overflow the tail collapses
+            # into a single "… and N more" field. The Status field already holds
+            # one of the 25 slots, leaving 24 for entries + that tail.
+            for idx, entry in enumerate(entries):
                 name = header if idx == 0 else "\u200b"
-                embed.add_field(name=name, value=field_value, inline=False)
+                remaining = len(entries) - idx
+                out_of_fields = len(embed.fields) >= 24 and remaining > 1
+                out_of_chars = (idx > 0
+                                and _embed_total_chars(embed) + len(name) + len(entry) > 6000)
+                if idx > 0 and (out_of_fields or out_of_chars):
+                    embed.add_field(
+                        name="\u200b",
+                        value=t("embed.suggestions_more", lang, count=remaining),
+                        inline=False,
+                    )
+                    break
+                embed.add_field(name=name, value=entry, inline=False)
 
-            # Trim entries only if total embed exceeds 6000 chars
-            while _embed_total_chars(embed) > 6000 and len(entries) > 1:
-                entries.pop()
-                remaining = rendered_total - len(entries)
-
-                fields = _split_entries_evenly(entries)
-                if fields:
-                    fields[-1] = f"{fields[-1]}\n{t('embed.suggestions_more', lang, count=remaining)}"
-
-                embed.clear_fields()
-                embed.add_field(name=t("embed.status", lang), value=status_text, inline=False)
-                for idx, field_value in enumerate(fields):
-                    name = header if idx == 0 else "\u200b"
-                    embed.add_field(name=name, value=field_value, inline=False)
         else:
             embed.add_field(
                 name=f"📋 {t('embed.suggestions_header', lang)} ({len(suggestions)}/{max_total})",
