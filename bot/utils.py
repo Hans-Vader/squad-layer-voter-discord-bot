@@ -391,6 +391,49 @@ def format_suggestion_entry(index: int, suggestion: dict,
     )
 
 
+_RANK_MEDALS = {1: "🥇", 2: "🥈", 3: "🥉"}
+
+
+def format_vote_bar(count: int, total: int, width: int = 10) -> str:
+    """Unicode block bar whose length is the count's share of ``total``.
+
+    Scaling to the total (not the leader) keeps the bar and the printed
+    percentage consistent. All empty when ``total`` is 0 (no votes yet); at
+    least one filled block when ``count > 0`` so an option with real votes is
+    never invisible.
+    """
+    if total <= 0:
+        filled = 0
+    else:
+        # Half-up rounding (int(x + 0.5)); Python's round() is half-to-even and
+        # would render a block short at exact .5 boundaries.
+        filled = min(int(count / total * width + 0.5), width)
+        if count > 0 and filled == 0:
+            filled = 1
+    return "█" * filled + "░" * (width - filled)
+
+
+def _format_vote_result_entry(rank: int, suggestion: dict, count: int,
+                              total: int) -> str:
+    """Render one ranked voting entry: a bar line above the layer detail.
+
+    The bar line carries a 🥇/🥈/🥉 medal for the top three (only when that
+    option has votes — no medals on a fresh all-zero poll), a block bar sized
+    to the option's share of ``total``, the raw count and — when any votes
+    exist — that share as a percentage. The detail lines reuse
+    ``format_suggestion_entry`` (with ``vote_count=None`` to drop the inline
+    🗳️ prefix; ``rank`` becomes the "N." label).
+    """
+    prefix = f"{_RANK_MEDALS[rank]} " if rank in _RANK_MEDALS and count > 0 else ""
+    line = f"{prefix}`{format_vote_bar(count, total)}` {count}"
+    if total > 0:
+        # Half-up, and floor a real vote to 1% so a filled bar block is never
+        # labelled 0% (mirrors format_vote_bar's min-one-block guard).
+        pct = max(1, int(count / total * 100 + 0.5)) if count > 0 else 0
+        line += f" · {pct}%"
+    return f"{line}\n{format_suggestion_entry(rank, suggestion, vote_count=None)}"
+
+
 _GAMEMODE_ABBREV = {
     "TerritoryControl": "TC",
     "Invasion": "INV",
@@ -589,19 +632,41 @@ def build_event_embed(event: dict, settings: dict, db_id: int,
         "max_total_suggestions", settings.get("max_total_suggestions", 25))
 
     if phase in ("suggestions_open", "suggestions_closed", "voting"):
-        header = f"📋 {t('embed.suggestions_header', lang)} ({len(suggestions)}/{max_total})"
         if suggestions:
-            show_counts = phase == "voting" and vote_counts is not None
+            # A non-empty vote_counts dict means the poll is live and we have
+            # per-layer counts → show a sorted bar-chart of the ballot only.
+            # None (non-voting) or {} (poll fetch failed) falls back to the
+            # plain, submission-order listing.
+            use_bars = phase == "voting" and vote_counts
 
-            def _entry_count(sug: dict) -> Optional[int]:
-                if not show_counts:
-                    return None
-                return vote_counts.get(sug.get("id"), 0)
-
-            entries = [
-                format_suggestion_entry(i, s, vote_count=_entry_count(s))
-                for i, s in enumerate(suggestions, 1)
-            ]
+            if use_bars:
+                # The ballot = the layers _start_poll actually put on the poll:
+                # those in selected_for_vote, capped to Discord's 10-answer
+                # limit, in suggestion order. Deriving it from selected_for_vote
+                # (not from vote_counts keys) keeps a still-votable layer visible
+                # even when _fetch_vote_counts couldn't read its count — e.g. its
+                # recomputed poll-option text no longer matches the frozen poll
+                # answer — so it shows 0 rather than vanishing from the board.
+                selected_ids = set(event.get("selected_for_vote") or [])
+                ballot = [s for s in suggestions if s.get("id") in selected_ids][:10]
+                counts = {s["id"]: vote_counts.get(s["id"], 0) for s in ballot}
+                # Descending by votes; a stable sort keeps submission order
+                # among ties.
+                ballot.sort(key=lambda s: -counts[s["id"]])
+                total = sum(counts.values())
+                entries = [
+                    _format_vote_result_entry(rank, s, counts[s["id"]], total)
+                    for rank, s in enumerate(ballot, 1)
+                ]
+                header = f"📋 {t('embed.live_results_header', lang)}"
+                rendered_total = len(ballot)
+            else:
+                entries = [
+                    format_suggestion_entry(i, s)
+                    for i, s in enumerate(suggestions, 1)
+                ]
+                header = f"📋 {t('embed.suggestions_header', lang)} ({len(suggestions)}/{max_total})"
+                rendered_total = len(suggestions)
 
             # Distribute entries evenly across the minimum number of fields
             # needed (each ≤1024 chars), so e.g. 8 long entries render as
@@ -616,11 +681,11 @@ def build_event_embed(event: dict, settings: dict, db_id: int,
             # Trim entries only if total embed exceeds 6000 chars
             while _embed_total_chars(embed) > 6000 and len(entries) > 1:
                 entries.pop()
-                remaining = len(suggestions) - len(entries)
+                remaining = rendered_total - len(entries)
 
                 fields = _split_entries_evenly(entries)
                 if fields:
-                    fields[-1] = f"{fields[-1]}\n... and {remaining} more"
+                    fields[-1] = f"{fields[-1]}\n{t('embed.suggestions_more', lang, count=remaining)}"
 
                 embed.clear_fields()
                 embed.add_field(name=t("embed.status", lang), value=status_text, inline=False)
