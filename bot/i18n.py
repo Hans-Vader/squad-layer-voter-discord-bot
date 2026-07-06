@@ -488,6 +488,14 @@ _STRINGS: dict[str, dict[str, str]] = {
         "de": "Vorschläge",
         "en": "Suggestions",
     },
+    "embed.live_results_header": {
+        "de": "Live-Ergebnis",
+        "en": "Live results",
+    },
+    "embed.suggestions_more": {
+        "de": "… und {count} weitere",
+        "en": "… and {count} more",
+    },
     "embed.suggestions_count": {
         "de": "{count} Vorschläge eingereicht",
         "en": "{count} suggestions submitted",
