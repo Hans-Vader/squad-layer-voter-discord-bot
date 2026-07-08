@@ -63,6 +63,16 @@ def test_unmatched_text_falls_back_to_first_selected():
     assert tied == []
 
 
+def test_text_collision_single_answer_is_not_a_draw():
+    # Two ballot layers that format to the SAME poll-option text (identical fields,
+    # different id) share one poll answer. A single top answer must never become a draw.
+    a, b = _suggestion("a", "Narva"), _suggestion("b", "Narva")
+    assert utils.format_layer_poll_option(a) == utils.format_layer_poll_option(b)
+    winner, tied = botmod._tally_poll(_counts((a, 6)), [a, b])
+    assert tied == []
+    assert winner in (a, b)
+
+
 def test_draw_pending_embed_lists_only_tied_layers():
     event = {
         "name": "Test Event",

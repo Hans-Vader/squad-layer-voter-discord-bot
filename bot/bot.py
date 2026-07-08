@@ -954,6 +954,25 @@ def _bind(view: ui.View, interaction: discord.Interaction) -> ui.View:
 # PERSISTENT VIEW — Event embed buttons
 # ═══════════════════════════════════════════════════════════════════════════
 
+def _add_admin_button(view: ui.View, db_id: int, lang: str) -> None:
+    """Attach the standard ⚙️ admin button (routes to the admin panel).
+
+    Shared by every phase view so the label / style / custom_id can't drift.
+    """
+    btn = ui.Button(
+        label=t("button.admin", lang),
+        style=discord.ButtonStyle.danger,
+        custom_id=f"event_action:admin:{db_id}",
+        emoji="⚙️",
+    )
+
+    async def _cb(interaction: discord.Interaction):
+        await handle_admin_panel(interaction, db_id)
+
+    btn.callback = _cb
+    view.add_item(btn)
+
+
 class EventActionView(ui.View):
     """View attached to a specific event's embed. Buttons: Suggest, Info, Admin.
 
@@ -998,14 +1017,7 @@ class EventActionView(ui.View):
         info.callback = self._info
         self.add_item(info)
 
-        admin = ui.Button(
-            label=t("button.admin", lang),
-            style=discord.ButtonStyle.danger,
-            custom_id=f"event_action:admin:{db_id}",
-            emoji="⚙️",
-        )
-        admin.callback = self._admin
-        self.add_item(admin)
+        _add_admin_button(self, db_id, lang)
 
     async def _suggest(self, interaction: discord.Interaction):
         await handle_suggest_start(interaction, self.db_id)
@@ -1015,9 +1027,6 @@ class EventActionView(ui.View):
 
     async def _info(self, interaction: discord.Interaction):
         await handle_info(interaction, self.db_id)
-
-    async def _admin(self, interaction: discord.Interaction):
-        await handle_admin_panel(interaction, self.db_id)
 
 
 class VotingPhaseView(ui.View):
@@ -1043,20 +1052,10 @@ class VotingPhaseView(ui.View):
         join.callback = self._join
         self.add_item(join)
 
-        admin = ui.Button(
-            label=t("button.admin", lang),
-            style=discord.ButtonStyle.danger,
-            custom_id=f"event_action:admin:{db_id}",
-            emoji="⚙️",
-        )
-        admin.callback = self._admin
-        self.add_item(admin)
+        _add_admin_button(self, db_id, lang)
 
     async def _join(self, interaction: discord.Interaction):
         await handle_join_vote(interaction, self.db_id)
-
-    async def _admin(self, interaction: discord.Interaction):
-        await handle_admin_panel(interaction, self.db_id)
 
 
 class CompletedPhaseView(ui.View):
@@ -1071,18 +1070,7 @@ class CompletedPhaseView(ui.View):
     def __init__(self, db_id: int, lang: str = "en"):
         super().__init__(timeout=None)
         self.db_id = db_id
-
-        admin = ui.Button(
-            label=t("button.admin", lang),
-            style=discord.ButtonStyle.danger,
-            custom_id=f"event_action:admin:{db_id}",
-            emoji="⚙️",
-        )
-        admin.callback = self._admin
-        self.add_item(admin)
-
-    async def _admin(self, interaction: discord.Interaction):
-        await handle_admin_panel(interaction, self.db_id)
+        _add_admin_button(self, db_id, lang)
 
 
 class DrawPendingView(ui.View):
@@ -1112,22 +1100,12 @@ class DrawPendingView(ui.View):
             btn.callback = self._make_cb(action)
             self.add_item(btn)
 
-        admin = ui.Button(
-            label=t("button.admin", lang),
-            style=discord.ButtonStyle.danger,
-            custom_id=f"event_action:admin:{db_id}",
-            emoji="⚙️",
-        )
-        admin.callback = self._admin
-        self.add_item(admin)
+        _add_admin_button(self, db_id, lang)
 
     def _make_cb(self, action: str):
         async def cb(interaction: discord.Interaction):
             await handle_draw_action(interaction, self.db_id, action)
         return cb
-
-    async def _admin(self, interaction: discord.Interaction):
-        await handle_admin_panel(interaction, self.db_id)
 
 
 def _view_for_phase(db_id: int, phase: str, lang: str) -> Optional[ui.View]:
@@ -2928,6 +2906,12 @@ async def _start_poll(interaction: discord.Interaction, db_id: int,
     if reuse_thread:
         voting_thread = None
         target = await _resolve_poll_target(interaction.channel, event)
+        gated = bool(event.get("allowed_role_ids") or event.get("allowed_user_ids"))
+        if gated and not isinstance(target, discord.Thread):
+            # The gated event's private thread is gone; recreate it rather than
+            # leak the restricted poll into the public parent channel.
+            voting_thread = await _create_voting_thread(interaction.channel, event, db_id, lang)
+            target = voting_thread if voting_thread is not None else interaction.channel
     else:
         voting_thread = await _create_voting_thread(interaction.channel, event, db_id, lang)
         target = voting_thread if voting_thread is not None else interaction.channel
@@ -3131,13 +3115,22 @@ def _tally_poll(answer_counts: list[tuple[str, int]],
     best = max(c for _, c in answer_counts)
     if best <= 0:
         return None, []
+    # A draw is 2+ distinct top *answers*, not 2+ matched suggestions. Two ballot
+    # layers whose truncated poll-option text collides share a single poll answer,
+    # so they must not manufacture a false draw out of one outright winner.
     winning_texts = {text for text, c in answer_counts if c == best}
-    tied = [s for s in selected if format_layer_poll_option(s) in winning_texts]
-    if len(tied) == 1:
+    tied = []
+    seen: set = set()
+    for s in selected:
+        txt = format_layer_poll_option(s)
+        if txt in winning_texts and txt not in seen:
+            seen.add(txt)
+            tied.append(s)
+    if len(tied) >= 2:
+        return None, tied
+    if tied:
         return tied[0], []
-    if not tied:
-        return (selected[0] if selected else None), []
-    return None, tied
+    return (selected[0] if selected else None), []
 
 
 async def _resolve_poll_result(channel: discord.TextChannel,
@@ -3244,13 +3237,30 @@ class RunoffDurationModal(ui.Modal):
                 return
             event["voting_duration_hours"] = hours
             event["selected_for_vote"] = list(self.tied_ids)
+            # Drop the finalised poll id so a mid-runoff failure can't leave the
+            # background loop re-tallying the old poll and bouncing back here.
+            event["poll_message_id"] = None
             event["phase"] = "voting"
             event.pop("draw_tied_ids", None)
             db.save_event(record["db_id"], event)
 
         await interaction.response.send_message(
             t("runoff.started", self.lang, hours=hours), ephemeral=True)
-        await _start_poll(interaction, self.db_id, list(self.tied_ids), reuse_thread=True)
+        try:
+            await _start_poll(interaction, self.db_id, list(self.tied_ids), reuse_thread=True)
+        except Exception as e:
+            logger.error(f"Runoff poll failed to start for event {self.db_id}: {e}")
+            # Roll the event back to the draw so an organizer can retry instead of
+            # being stranded in a voting phase with no poll.
+            lock2 = _get_guild_lock(interaction.guild_id)
+            async with lock2:
+                rec = db.get_event_by_db_id(interaction.guild_id, self.db_id)
+                if rec and rec["event"].get("phase") == "voting":
+                    rec["event"]["phase"] = "draw_pending"
+                    rec["event"]["draw_tied_ids"] = list(self.tied_ids)
+                    db.save_event(rec["db_id"], rec["event"])
+            await interaction.followup.send(t("runoff.failed", self.lang), ephemeral=True)
+            await _update_event_embed(self.db_id)
 
 
 class DrawPickSelect(ui.Select):
@@ -3274,15 +3284,18 @@ class DrawPickSelect(ui.Select):
                                     color=discord.Color.greyple()),
                 view=None)
             return
+        # Ack now, then edit the picker: the DB write waits on the guild lock,
+        # which can exceed the 3s interaction window under contention.
+        await interaction.response.defer()
         event = await _apply_draw_winner(
             interaction.guild_id, self.view.db_id, winner, interaction.channel_id)
         if event is None:
-            await interaction.response.edit_message(
+            await interaction.edit_original_response(
                 embed=discord.Embed(description=t("draw.already_resolved", lang),
                                     color=discord.Color.greyple()),
                 view=None)
             return
-        await interaction.response.edit_message(
+        await interaction.edit_original_response(
             embed=discord.Embed(
                 description=t("draw.resolved_pick", lang, layer=format_layer_short(winner)),
                 color=discord.Color.green()),
@@ -3344,11 +3357,14 @@ async def handle_draw_action(interaction: discord.Interaction, db_id: int, actio
     # draw_random
     import random
     winner = random.choice(tied)
+    # Ack now: the DB write below waits on the guild lock (the background loop can
+    # hold it across a Discord fetch), which may exceed the 3s interaction window.
+    await interaction.response.defer(ephemeral=True)
     event = await _apply_draw_winner(interaction.guild_id, db_id, winner, interaction.channel_id)
     if event is None:
-        await interaction.response.send_message(t("draw.already_resolved", lang), ephemeral=True)
+        await interaction.followup.send(t("draw.already_resolved", lang), ephemeral=True)
         return
-    await interaction.response.send_message(
+    await interaction.followup.send(
         t("draw.resolved_random", lang, layer=format_layer_short(winner)), ephemeral=True)
     await _update_event_embed(db_id)
     await send_event_log(

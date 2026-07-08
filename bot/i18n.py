@@ -488,6 +488,10 @@ _STRINGS: dict[str, dict[str, str]] = {
         "de": "🔁 Stichwahl gestartet! Dauer: {hours} Stunden.",
         "en": "🔁 Runoff started! Duration: {hours} hours.",
     },
+    "runoff.failed": {
+        "de": "⚠️ Die Stichwahl konnte nicht gestartet werden. Das Unentschieden ist wieder offen — bitte erneut versuchen.",
+        "en": "⚠️ Couldn't start the runoff. The draw is open again — please try again.",
+    },
     "vote.poll_question": {
         "de": "Welcher Layer soll gespielt werden?",
         "en": "Which layer should be played?",
