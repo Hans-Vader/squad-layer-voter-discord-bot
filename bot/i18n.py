@@ -523,7 +523,7 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "Suggestions closed — {count} received",
     },
     "embed.status_draw_pending": {
-        "de": "Unentschieden — wartet auf Auflösung durch die Organisation",
+        "de": "Unentschieden — wartet auf Auflösung durch die Orga",
         "en": "Draw — awaiting resolution by an organizer",
     },
     "embed.draw_header": {
@@ -531,7 +531,7 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "It's a draw",
     },
     "embed.draw_desc": {
-        "de": "Die Organisation entscheidet unten, wie das Unentschieden aufgelöst wird.",
+        "de": "Die Orga entscheidet unten, wie das Unentschieden aufgelöst wird.",
         "en": "An organizer will choose below how to resolve the draw.",
     },
     "embed.status_voting": {
