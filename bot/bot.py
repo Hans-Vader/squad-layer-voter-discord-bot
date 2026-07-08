@@ -3198,6 +3198,49 @@ async def _apply_draw_winner(guild_id: int, db_id: int, winner: dict,
         return event
 
 
+async def _commit_draw_winner(interaction: discord.Interaction, db_id: int, winner: dict,
+                              lang: str, ack_key: str, log_tag: str) -> None:
+    """Finalize a drawn event with ``winner`` after the organizer confirmed.
+
+    Called from a Confirm button whose interaction has not yet been responded to.
+    """
+    await interaction.response.defer()
+    event = await _apply_draw_winner(interaction.guild_id, db_id, winner, interaction.channel_id)
+    if event is None:
+        await interaction.edit_original_response(
+            embed=discord.Embed(description=t("draw.already_resolved", lang),
+                                color=discord.Color.greyple()),
+            view=None)
+        return
+    await interaction.edit_original_response(
+        embed=discord.Embed(
+            description=t(ack_key, lang, layer=format_layer_short(winner)),
+            color=discord.Color.green()),
+        view=None)
+    await _update_event_embed(db_id)
+    await send_event_log(
+        event, db_id, f"Draw resolved ({log_tag}). Winner: {format_layer_short(winner)}",
+        guild_id=interaction.guild_id, lang=lang)
+
+
+async def _confirm_draw_random(interaction: discord.Interaction, db_id: int) -> None:
+    """Confirm callback for the Random tie-break: pick a tied layer at random now."""
+    settings = db.get_guild_settings(interaction.guild_id)
+    lang = settings.get("language", "en") if settings else "en"
+    record = db.get_event_by_db_id(interaction.guild_id, db_id)
+    tied = (_draw_tied_suggestions(record["event"])
+            if record and record["event"].get("phase") == "draw_pending" else [])
+    if not tied:
+        await interaction.response.edit_message(
+            embed=discord.Embed(description=t("draw.already_resolved", lang),
+                                color=discord.Color.greyple()),
+            view=None)
+        return
+    import random
+    await _commit_draw_winner(interaction, db_id, random.choice(tied), lang,
+                              "draw.resolved_random", "random")
+
+
 class RunoffDurationModal(ui.Modal):
     """Ask the organizer for a runoff duration, then re-poll only the tied layers."""
 
@@ -3275,8 +3318,9 @@ class DrawPickSelect(ui.Select):
                          options=options, min_values=1, max_values=1)
 
     async def callback(self, interaction: discord.Interaction):
-        self.view.stop()  # retire the picker; replaced by the result message
+        self.view.stop()  # retire the picker; replaced by the confirm dialog
         lang = self.view.lang
+        db_id = self.view.db_id
         winner = next((s for s in self.view.tied if s.get("id") == self.values[0]), None)
         if winner is None:
             await interaction.response.edit_message(
@@ -3284,27 +3328,18 @@ class DrawPickSelect(ui.Select):
                                     color=discord.Color.greyple()),
                 view=None)
             return
-        # Ack now, then edit the picker: the DB write waits on the guild lock,
-        # which can exceed the 3s interaction window under contention.
-        await interaction.response.defer()
-        event = await _apply_draw_winner(
-            interaction.guild_id, self.view.db_id, winner, interaction.channel_id)
-        if event is None:
-            await interaction.edit_original_response(
-                embed=discord.Embed(description=t("draw.already_resolved", lang),
-                                    color=discord.Color.greyple()),
-                view=None)
-            return
-        await interaction.edit_original_response(
+
+        # Confirm the pick before finalizing so a dropdown misclick doesn't end
+        # the vote outright.
+        async def _confirm(inter: discord.Interaction, _db_id: int):
+            await _commit_draw_winner(inter, db_id, winner, lang, "draw.resolved_pick", "pick")
+
+        view = _bind(ConfirmActionView(lang, _confirm, db_id=db_id), interaction)
+        await interaction.response.edit_message(
             embed=discord.Embed(
-                description=t("draw.resolved_pick", lang, layer=format_layer_short(winner)),
-                color=discord.Color.green()),
-            view=None)
-        await _update_event_embed(self.view.db_id)
-        await send_event_log(
-            event, self.view.db_id,
-            f"Draw resolved (pick). Winner: {format_layer_short(winner)}",
-            guild_id=interaction.guild_id, lang=lang)
+                description=t("draw.confirm_pick", lang, layer=format_layer_short(winner)),
+                color=discord.Color.orange()),
+            view=view)
 
 
 class DrawPickView(AutoDisableView):
@@ -3354,22 +3389,13 @@ async def handle_draw_action(interaction: discord.Interaction, db_id: int, actio
             view=view, ephemeral=True)
         return
 
-    # draw_random
-    import random
-    winner = random.choice(tied)
-    # Ack now: the DB write below waits on the guild lock (the background loop can
-    # hold it across a Discord fetch), which may exceed the 3s interaction window.
-    await interaction.response.defer(ephemeral=True)
-    event = await _apply_draw_winner(interaction.guild_id, db_id, winner, interaction.channel_id)
-    if event is None:
-        await interaction.followup.send(t("draw.already_resolved", lang), ephemeral=True)
-        return
-    await interaction.followup.send(
-        t("draw.resolved_random", lang, layer=format_layer_short(winner)), ephemeral=True)
-    await _update_event_embed(db_id)
-    await send_event_log(
-        event, db_id, f"Draw resolved (random). Winner: {format_layer_short(winner)}",
-        guild_id=interaction.guild_id, lang=lang)
+    # draw_random — confirm before rolling, so a misclick doesn't end the vote.
+    view = _bind(ConfirmActionView(lang, _confirm_draw_random, db_id=db_id), interaction)
+    await interaction.response.send_message(
+        embed=discord.Embed(
+            description=t("draw.confirm_random", lang, count=len(tied)),
+            color=discord.Color.orange()),
+        view=view, ephemeral=True)
 
 
 async def admin_delete_event(interaction: discord.Interaction, db_id: int):

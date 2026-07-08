@@ -468,6 +468,14 @@ _STRINGS: dict[str, dict[str, str]] = {
         "de": "Layer auswählen…",
         "en": "Select a layer…",
     },
+    "draw.confirm_random": {
+        "de": "Unentschieden zufällig auflösen? Einer der {count} Gleichstand-Layer gewinnt.",
+        "en": "Resolve the draw at random? One of the {count} tied layers will win.",
+    },
+    "draw.confirm_pick": {
+        "de": "**{layer}** als Gewinner festlegen?",
+        "en": "Set **{layer}** as the winner?",
+    },
     "draw.resolved_random": {
         "de": "🎲 Zufällig aufgelöst — Gewinner: {layer}",
         "en": "🎲 Resolved at random — winner: {layer}",
