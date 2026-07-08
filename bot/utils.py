@@ -556,6 +556,7 @@ def build_event_embed(event: dict, settings: dict, db_id: int,
         "suggestions_open": discord.Color.green(),
         "suggestions_closed": discord.Color.orange(),
         "voting": discord.Color.blue(),
+        "draw_pending": discord.Color.orange(),
         "completed": discord.Color.gold(),
     }
     color = color_map.get(phase, discord.Color.greyple())
@@ -587,6 +588,8 @@ def build_event_embed(event: dict, settings: dict, db_id: int,
             status_text = t("embed.status_voting_until", lang, ts=ts)
         else:
             status_text = t("embed.status_voting", lang)
+    elif phase == "draw_pending":
+        status_text = t("embed.status_draw_pending", lang)
     elif phase == "completed":
         status_text = t("embed.status_completed", lang)
     else:
@@ -664,6 +667,18 @@ def build_event_embed(event: dict, settings: dict, db_id: int,
                 value=t("embed.no_suggestions", lang),
                 inline=False,
             )
+
+    # Draw awaiting resolution: list the tied layers and prompt the organizer.
+    if phase == "draw_pending":
+        tied_ids = set(event.get("draw_tied_ids") or [])
+        tied = [s for s in suggestions if s.get("id") in tied_ids]
+        lines = "\n".join(f"• {format_layer_short(s)}" for s in tied)
+        value = f"{lines}\n\n{t('embed.draw_desc', lang)}" if lines else t("embed.draw_desc", lang)
+        embed.add_field(
+            name=f"⚖️ {t('embed.draw_header', lang)}",
+            value=value,
+            inline=False,
+        )
 
     # Winner (completed phase)
     if phase == "completed":

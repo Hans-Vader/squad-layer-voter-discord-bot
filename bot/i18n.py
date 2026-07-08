@@ -386,6 +386,10 @@ _STRINGS: dict[str, dict[str, str]] = {
         "de": "Abstimmung läuft",
         "en": "Voting in progress",
     },
+    "phase.name.draw_pending": {
+        "de": "Unentschieden — wartet auf Auflösung",
+        "en": "Draw — awaiting resolution",
+    },
     "phase.name.completed": {
         "de": "Abgeschlossen",
         "en": "Completed",
@@ -438,6 +442,52 @@ _STRINGS: dict[str, dict[str, str]] = {
         "de": "Kein eindeutiger Gewinner.",
         "en": "No clear winner.",
     },
+    "vote.draw_detected": {
+        "de": "Unentschieden zwischen: {layers}. Wähle unten, wie es aufgelöst wird.",
+        "en": "It's a draw between: {layers}. Choose below how to resolve it.",
+    },
+
+    # ── Draw resolution ───────────────────────────────────────────────────
+    "button.draw_runoff": {
+        "de": "Stichwahl",
+        "en": "Runoff",
+    },
+    "button.draw_random": {
+        "de": "Zufällig",
+        "en": "Random",
+    },
+    "button.draw_pick": {
+        "de": "Selbst wählen",
+        "en": "Pick one",
+    },
+    "draw.pick_prompt": {
+        "de": "Wähle den Gewinner-Layer:",
+        "en": "Choose the winning layer:",
+    },
+    "draw.pick_placeholder": {
+        "de": "Layer auswählen…",
+        "en": "Select a layer…",
+    },
+    "draw.resolved_random": {
+        "de": "🎲 Zufällig aufgelöst — Gewinner: {layer}",
+        "en": "🎲 Resolved at random — winner: {layer}",
+    },
+    "draw.resolved_pick": {
+        "de": "✅ Gewinner gewählt: {layer}",
+        "en": "✅ Winner chosen: {layer}",
+    },
+    "draw.already_resolved": {
+        "de": "Dieses Unentschieden wurde bereits aufgelöst.",
+        "en": "This draw has already been resolved.",
+    },
+    "runoff.duration_label": {
+        "de": "Dauer der Stichwahl",
+        "en": "Runoff duration",
+    },
+    "runoff.started": {
+        "de": "🔁 Stichwahl gestartet! Dauer: {hours} Stunden.",
+        "en": "🔁 Runoff started! Duration: {hours} hours.",
+    },
     "vote.poll_question": {
         "de": "Welcher Layer soll gespielt werden?",
         "en": "Which layer should be played?",
@@ -471,6 +521,18 @@ _STRINGS: dict[str, dict[str, str]] = {
     "embed.status_suggestions_closed": {
         "de": "Vorschläge geschlossen — {count} eingegangen",
         "en": "Suggestions closed — {count} received",
+    },
+    "embed.status_draw_pending": {
+        "de": "Unentschieden — wartet auf Auflösung durch die Organisation",
+        "en": "Draw — awaiting resolution by an organizer",
+    },
+    "embed.draw_header": {
+        "de": "Unentschieden",
+        "en": "It's a draw",
+    },
+    "embed.draw_desc": {
+        "de": "Die Organisation entscheidet unten, wie das Unentschieden aufgelöst wird.",
+        "en": "An organizer will choose below how to resolve the draw.",
     },
     "embed.status_voting": {
         "de": "Abstimmung läuft",

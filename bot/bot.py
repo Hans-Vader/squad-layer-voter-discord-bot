@@ -1085,10 +1085,57 @@ class CompletedPhaseView(ui.View):
         await handle_admin_panel(interaction, self.db_id)
 
 
+class DrawPendingView(ui.View):
+    """View attached to a drawn event's embed while it awaits resolution.
+
+    Three organizer-only buttons — runoff / random / pick manually — bound to the
+    event's db_id. Persistent (timeout=None) so `setup_hook` re-attaches it across
+    restarts, exactly like the other phase views.
+    """
+
+    _BUTTONS = (
+        ("draw_runoff", "button.draw_runoff", discord.ButtonStyle.primary, "🔁"),
+        ("draw_random", "button.draw_random", discord.ButtonStyle.secondary, "🎲"),
+        ("draw_pick", "button.draw_pick", discord.ButtonStyle.secondary, "☝️"),
+    )
+
+    def __init__(self, db_id: int, lang: str = "en"):
+        super().__init__(timeout=None)
+        self.db_id = db_id
+        for action, label_key, style, emoji in self._BUTTONS:
+            btn = ui.Button(
+                label=t(label_key, lang),
+                style=style,
+                custom_id=f"event_action:{action}:{db_id}",
+                emoji=emoji,
+            )
+            btn.callback = self._make_cb(action)
+            self.add_item(btn)
+
+        admin = ui.Button(
+            label=t("button.admin", lang),
+            style=discord.ButtonStyle.danger,
+            custom_id=f"event_action:admin:{db_id}",
+            emoji="⚙️",
+        )
+        admin.callback = self._admin
+        self.add_item(admin)
+
+    def _make_cb(self, action: str):
+        async def cb(interaction: discord.Interaction):
+            await handle_draw_action(interaction, self.db_id, action)
+        return cb
+
+    async def _admin(self, interaction: discord.Interaction):
+        await handle_admin_panel(interaction, self.db_id)
+
+
 def _view_for_phase(db_id: int, phase: str, lang: str) -> Optional[ui.View]:
     """Return the persistent View for an event in the given phase."""
     if phase == "completed":
         return CompletedPhaseView(db_id, lang)
+    if phase == "draw_pending":
+        return DrawPendingView(db_id, lang)
     if phase == "voting":
         return VotingPhaseView(db_id, lang)
     return EventActionView(db_id, lang, phase)
@@ -2843,8 +2890,14 @@ async def handle_join_vote(interaction: discord.Interaction, db_id: int):
 
 
 async def _start_poll(interaction: discord.Interaction, db_id: int,
-                      selected_ids: list[str]):
-    """Create a Discord native poll for the selected layers."""
+                      selected_ids: list[str], reuse_thread: bool = False):
+    """Create a Discord native poll for the selected layers.
+
+    ``reuse_thread=True`` (runoff): post into the event's existing voting thread
+    instead of creating a new one, and leave ``vote_thread_id`` untouched — avoids
+    a second thread and re-pinging a gated role. In that case the interaction has
+    already been responded to (by the runoff modal), so the ack edit is skipped.
+    """
     record = db.get_event_by_db_id(interaction.guild_id, db_id)
     if not record:
         return
@@ -2870,9 +2923,14 @@ async def _start_poll(interaction: discord.Interaction, db_id: int,
         poll.add_answer(text=format_layer_poll_option(s))
 
     # Gated events post the poll inside a private thread so Discord enforces
-    # the allow-list. Open events keep the legacy in-channel behavior.
-    voting_thread = await _create_voting_thread(interaction.channel, event, db_id, lang)
-    target = voting_thread if voting_thread is not None else interaction.channel
+    # the allow-list. Open events keep the legacy in-channel behavior. A runoff
+    # reuses the existing thread rather than spawning a new one.
+    if reuse_thread:
+        voting_thread = None
+        target = await _resolve_poll_target(interaction.channel, event)
+    else:
+        voting_thread = await _create_voting_thread(interaction.channel, event, db_id, lang)
+        target = voting_thread if voting_thread is not None else interaction.channel
     poll_message = await target.send(poll=poll)
 
     poll_end_time = (
@@ -2891,13 +2949,14 @@ async def _start_poll(interaction: discord.Interaction, db_id: int,
                 event["vote_thread_id"] = voting_thread.id
             db.save_event(record["db_id"], event)
 
-    await interaction.response.edit_message(
-        embed=discord.Embed(
-            description=f"✅ {t('vote.started', lang, hours=duration_hours)}",
-            color=discord.Color.green(),
-        ),
-        view=None,
-    )
+    if not interaction.response.is_done():
+        await interaction.response.edit_message(
+            embed=discord.Embed(
+                description=f"✅ {t('vote.started', lang, hours=duration_hours)}",
+                color=discord.Color.green(),
+            ),
+            view=None,
+        )
     await _update_event_embed(db_id)
     await send_event_log(
         event, db_id,
@@ -2971,6 +3030,28 @@ async def _auto_start_poll(db_id: int, selected_ids: list[str]) -> bool:
     return True
 
 
+def _complete_event_with_winner(event: dict, winner: Optional[dict]) -> None:
+    """Mark an event completed with the given winner (may be None = no winner).
+
+    In-memory mutation only — caller saves. Shared by every path that finalizes a
+    vote so the manual and automatic ends can't drift apart.
+    """
+    event["phase"] = "completed"
+    event["winning_layer"] = winner
+    event["winning_layer_command"] = build_admin_change_layer(winner)
+    event.pop("draw_tied_ids", None)
+    _attach_winner_vehicles(winner)
+
+
+def _enter_draw_pending(event: dict, tied: list[dict]) -> None:
+    """Park a drawn vote in the draw-pending phase, remembering the tied ballot ids.
+
+    In-memory mutation only — caller saves.
+    """
+    event["phase"] = "draw_pending"
+    event["draw_tied_ids"] = [s["id"] for s in tied if s.get("id")]
+
+
 async def admin_end_vote(interaction: discord.Interaction, db_id: int):
     """End the voting phase and determine the winner."""
     settings = db.get_guild_settings(interaction.guild_id)
@@ -2991,27 +3072,34 @@ async def admin_end_vote(interaction: discord.Interaction, db_id: int):
             return
 
         # Try to end the poll and get results
-        winner = await _resolve_poll_winner(interaction.channel, event)
+        winner, tied = await _resolve_poll_result(interaction.channel, event)
 
-        event["phase"] = "completed"
-        event["winning_layer"] = winner
-        event["winning_layer_command"] = build_admin_change_layer(winner)
-        _attach_winner_vehicles(winner)
-        db.save_event(record["db_id"], event)
+        if tied:
+            # Draw: park the event and let an organizer pick how to resolve it.
+            _enter_draw_pending(event, tied)
+            db.save_event(record["db_id"], event)
+        else:
+            _complete_event_with_winner(event, winner)
+            db.save_event(record["db_id"], event)
+            # Only record events that actually produced a winner.
+            if winner:
+                db.save_voting_history(
+                    interaction.guild_id,
+                    interaction.channel_id,
+                    event.get("suggestions", []),
+                    winner,
+                )
 
-        # Only record events that actually produced a winner.
-        if winner:
-            db.save_voting_history(
-                interaction.guild_id,
-                interaction.channel_id,
-                event.get("suggestions", []),
-                winner,
-            )
-
-    if winner:
+    if tied:
+        tied_names = ", ".join(format_layer_short(s) for s in tied)
+        desc = f"⚖️ {t('vote.draw_detected', lang, layers=tied_names)}"
+        log_msg = f"Voting ended in a draw between: {tied_names}"
+    elif winner:
         desc = f"✅ {t('vote.ended', lang)}\n{t('vote.winner', lang, layer=format_layer_short(winner))}"
+        log_msg = f"Voting ended. Winner: {format_layer_short(winner)}"
     else:
         desc = f"✅ {t('vote.ended', lang)}\n{t('vote.no_winner', lang)}"
+        log_msg = "Voting ended. Winner: None"
 
     await interaction.response.edit_message(
         embed=discord.Embed(description=desc, color=discord.Color.gold()),
@@ -3019,25 +3107,56 @@ async def admin_end_vote(interaction: discord.Interaction, db_id: int):
     )
     await _update_event_embed(db_id)
     await send_event_log(
-        event, db_id,
-        f"Voting ended. Winner: {format_layer_short(winner) if winner else 'None'}",
+        event, db_id, log_msg,
         guild_id=interaction.guild_id,
         lang=lang,
     )
 
 
-async def _resolve_poll_winner(channel: discord.TextChannel, event: dict) -> Optional[dict]:
-    """Try to fetch poll results and determine the winning layer."""
+def _tally_poll(answer_counts: list[tuple[str, int]],
+                selected: list[dict]) -> tuple[Optional[dict], list[dict]]:
+    """Decide a poll's outcome from (answer_text, vote_count) pairs.
+
+    Returns (winner, tied):
+    - one suggestion holds the top count (> 0 votes) -> (winner, [])
+    - 2+ suggestions share the top count (> 0)       -> (None, [tied...]) in ballot order
+    - no votes / empty poll                          -> (None, [])
+
+    Answer text is matched back to a suggestion with ``format_layer_poll_option``,
+    the same formatter used to build the poll. If a lone top answer matches no
+    ballot entry, fall back to the first selected suggestion (legacy behaviour).
+    """
+    if not answer_counts:
+        return None, []
+    best = max(c for _, c in answer_counts)
+    if best <= 0:
+        return None, []
+    winning_texts = {text for text, c in answer_counts if c == best}
+    tied = [s for s in selected if format_layer_poll_option(s) in winning_texts]
+    if len(tied) == 1:
+        return tied[0], []
+    if not tied:
+        return (selected[0] if selected else None), []
+    return None, tied
+
+
+async def _resolve_poll_result(channel: discord.TextChannel,
+                               event: dict) -> tuple[Optional[dict], list[dict]]:
+    """Fetch + end the poll and tally it into (winner, tied) via ``_tally_poll``.
+
+    A non-empty ``tied`` list means the vote ended in a draw. ``(None, [])`` means
+    no votes or a poll/fetch failure — not a draw.
+    """
     poll_msg_id = event.get("poll_message_id")
     if not poll_msg_id:
-        return None
+        return None, []
 
     target = await _resolve_poll_target(channel, event)
 
     try:
         message = await target.fetch_message(poll_msg_id)
         if not message.poll:
-            return None
+            return None, []
 
         # Try to end the poll if it's still active
         try:
@@ -3045,34 +3164,196 @@ async def _resolve_poll_winner(channel: discord.TextChannel, event: dict) -> Opt
         except discord.HTTPException:
             pass
 
-        # Find the answer with most votes
-        best_answer = None
-        best_votes = -1
-        for answer in message.poll.answers:
-            if answer.vote_count > best_votes:
-                best_votes = answer.vote_count
-                best_answer = answer
-
-        if best_answer and best_votes > 0:
-            # Match back to suggestion by poll answer text
-            selected_ids = event.get("selected_for_vote", [])
-            suggestions = event.get("suggestions", [])
-            selected = [s for s in suggestions if s.get("id") in selected_ids]
-
-            answer_text = best_answer.text
-            for s in selected:
-                if format_layer_poll_option(s) == answer_text:
-                    return s
-
-            # Fallback: return first selected if exact match fails
-            if selected:
-                return selected[0]
+        answer_counts = [(a.text, a.vote_count) for a in message.poll.answers]
+        selected_ids = event.get("selected_for_vote", [])
+        selected = [s for s in event.get("suggestions", []) if s.get("id") in selected_ids]
+        return _tally_poll(answer_counts, selected)
     except discord.NotFound:
         logger.warning(f"Poll message {poll_msg_id} not found")
     except Exception as e:
         logger.error(f"Error resolving poll winner: {e}")
 
-    return None
+    return None, []
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# DRAW RESOLUTION — organizer picks how to break a tied vote
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _draw_tied_suggestions(event: dict) -> list[dict]:
+    """The tied suggestions recorded when the event entered draw_pending."""
+    by_id = {s["id"]: s for s in event.get("suggestions", []) if s.get("id")}
+    return [by_id[i] for i in event.get("draw_tied_ids", []) if i in by_id]
+
+
+async def _apply_draw_winner(guild_id: int, db_id: int, winner: dict,
+                             channel_id: int) -> Optional[dict]:
+    """Complete a drawn event with the chosen winner, under the guild lock.
+
+    Returns the updated event dict, or None if the draw was already resolved by
+    someone else (lost the race). Records voting history like a normal win.
+    """
+    lock = _get_guild_lock(guild_id)
+    async with lock:
+        record = db.get_event_by_db_id(guild_id, db_id)
+        if not record or record["event"].get("phase") != "draw_pending":
+            return None
+        event = record["event"]
+        _complete_event_with_winner(event, winner)
+        db.save_event(record["db_id"], event)
+        db.save_voting_history(guild_id, channel_id, event.get("suggestions", []), winner)
+        return event
+
+
+class RunoffDurationModal(ui.Modal):
+    """Ask the organizer for a runoff duration, then re-poll only the tied layers."""
+
+    def __init__(self, db_id: int, lang: str, tied_ids: list[str], default_hours: int):
+        super().__init__(title=t("runoff.duration_label", lang)[:45])
+        self.db_id = db_id
+        self.lang = lang
+        self.tied_ids = tied_ids
+        self.duration_input = ui.TextInput(
+            label=t("runoff.duration_label", lang)[:45],
+            placeholder=DURATION_HINT,
+            default=f"{default_hours}h",
+            required=True,
+            max_length=20,
+        )
+        self.add_item(self.duration_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        raw = (self.duration_input.value or "").strip()
+        hours = parse_voting_duration_input(raw)
+        if hours is None:
+            await interaction.response.send_message(
+                t("phase.invalid_duration", self.lang, value=raw), ephemeral=True)
+            return
+
+        lock = _get_guild_lock(interaction.guild_id)
+        async with lock:
+            record = db.get_event_by_db_id(interaction.guild_id, self.db_id)
+            if not record:
+                await interaction.response.send_message(
+                    t("event.no_event", self.lang), ephemeral=True)
+                return
+            event = record["event"]
+            if event.get("phase") != "draw_pending":
+                await interaction.response.send_message(
+                    t("draw.already_resolved", self.lang), ephemeral=True)
+                return
+            event["voting_duration_hours"] = hours
+            event["selected_for_vote"] = list(self.tied_ids)
+            event["phase"] = "voting"
+            event.pop("draw_tied_ids", None)
+            db.save_event(record["db_id"], event)
+
+        await interaction.response.send_message(
+            t("runoff.started", self.lang, hours=hours), ephemeral=True)
+        await _start_poll(interaction, self.db_id, list(self.tied_ids), reuse_thread=True)
+
+
+class DrawPickSelect(ui.Select):
+    """Dropdown of the tied layers for the manual-pick tie-break."""
+
+    def __init__(self, tied: list[dict], lang: str):
+        options = [
+            discord.SelectOption(label=format_layer_poll_option(s)[:100], value=s["id"])
+            for s in tied if s.get("id")
+        ]
+        super().__init__(placeholder=t("draw.pick_placeholder", lang),
+                         options=options, min_values=1, max_values=1)
+
+    async def callback(self, interaction: discord.Interaction):
+        self.view.stop()  # retire the picker; replaced by the result message
+        lang = self.view.lang
+        winner = next((s for s in self.view.tied if s.get("id") == self.values[0]), None)
+        if winner is None:
+            await interaction.response.edit_message(
+                embed=discord.Embed(description=t("draw.already_resolved", lang),
+                                    color=discord.Color.greyple()),
+                view=None)
+            return
+        event = await _apply_draw_winner(
+            interaction.guild_id, self.view.db_id, winner, interaction.channel_id)
+        if event is None:
+            await interaction.response.edit_message(
+                embed=discord.Embed(description=t("draw.already_resolved", lang),
+                                    color=discord.Color.greyple()),
+                view=None)
+            return
+        await interaction.response.edit_message(
+            embed=discord.Embed(
+                description=t("draw.resolved_pick", lang, layer=format_layer_short(winner)),
+                color=discord.Color.green()),
+            view=None)
+        await _update_event_embed(self.view.db_id)
+        await send_event_log(
+            event, self.view.db_id,
+            f"Draw resolved (pick). Winner: {format_layer_short(winner)}",
+            guild_id=interaction.guild_id, lang=lang)
+
+
+class DrawPickView(AutoDisableView):
+    """Ephemeral picker for the manual tie-break."""
+
+    def __init__(self, db_id: int, lang: str, tied: list[dict]):
+        super().__init__(timeout=120)
+        self.db_id = db_id
+        self.lang = lang
+        self.tied = tied
+        self.add_item(DrawPickSelect(tied, lang))
+
+
+async def handle_draw_action(interaction: discord.Interaction, db_id: int, action: str):
+    """Organizer resolves a drawn vote: runoff / random / pick manually."""
+    settings = db.get_guild_settings(interaction.guild_id)
+    lang = settings.get("language", "en") if settings else "en"
+    if not has_organizer_role(interaction.user, (settings or {}).get("organizer_role_id", 0)):
+        await interaction.response.send_message(
+            t("general.requires_organizer", lang), ephemeral=True)
+        return
+
+    record = db.get_event_by_db_id(interaction.guild_id, db_id)
+    if not record:
+        await interaction.response.send_message(t("event.no_event", lang), ephemeral=True)
+        return
+    event = record["event"]
+    if event.get("phase") != "draw_pending":
+        await interaction.response.send_message(t("draw.already_resolved", lang), ephemeral=True)
+        return
+
+    tied = _draw_tied_suggestions(event)
+    if not tied:
+        await interaction.response.send_message(t("draw.already_resolved", lang), ephemeral=True)
+        return
+
+    if action == "draw_runoff":
+        await interaction.response.send_modal(
+            RunoffDurationModal(db_id, lang, [s["id"] for s in tied],
+                                event.get("voting_duration_hours", 24)))
+        return
+
+    if action == "draw_pick":
+        view = _bind(DrawPickView(db_id, lang, tied), interaction)
+        await interaction.response.send_message(
+            embed=discord.Embed(title=t("draw.pick_prompt", lang), color=discord.Color.gold()),
+            view=view, ephemeral=True)
+        return
+
+    # draw_random
+    import random
+    winner = random.choice(tied)
+    event = await _apply_draw_winner(interaction.guild_id, db_id, winner, interaction.channel_id)
+    if event is None:
+        await interaction.response.send_message(t("draw.already_resolved", lang), ephemeral=True)
+        return
+    await interaction.response.send_message(
+        t("draw.resolved_random", lang, layer=format_layer_short(winner)), ephemeral=True)
+    await _update_event_embed(db_id)
+    await send_event_log(
+        event, db_id, f"Draw resolved (random). Winner: {format_layer_short(winner)}",
+        guild_id=interaction.guild_id, lang=lang)
 
 
 async def admin_delete_event(interaction: discord.Interaction, db_id: int):
@@ -6248,30 +6529,42 @@ async def check_events_loop():
                                     message = await target.fetch_message(poll_msg_id)
                                     if message.poll and message.poll.is_finalised():
                                         lock = _get_guild_lock(guild_id)
+                                        tied: list[dict] = []
+                                        winner = None
+                                        finalized = False
                                         async with lock:
                                             rec = db.get_event_by_db_id(guild_id, db_id)
                                             if rec and rec["event"].get("phase") == "voting":
-                                                winner = await _resolve_poll_winner(channel, rec["event"])
-                                                rec["event"]["phase"] = "completed"
-                                                rec["event"]["winning_layer"] = winner
-                                                rec["event"]["winning_layer_command"] = build_admin_change_layer(winner)
-                                                _attach_winner_vehicles(winner)
-                                                db.save_event(rec["db_id"], rec["event"])
-                                                if winner:
-                                                    db.save_voting_history(
-                                                        guild_id, channel_id,
-                                                        rec["event"].get("suggestions", []),
-                                                        winner,
-                                                    )
-                                        await _update_event_embed(db_id)
-                                        winner_str = format_layer_short(winner) if winner else "None"
-                                        lang = db.get_guild_language(guild_id)
-                                        await send_event_log(
-                                            event, db_id,
-                                            f"Poll ended in <#{channel_id}>. Winner: {winner_str}",
-                                            guild_id=guild_id,
-                                            lang=lang,
-                                        )
+                                                finalized = True
+                                                winner, tied = await _resolve_poll_result(channel, rec["event"])
+                                                if tied:
+                                                    # Draw: park it; an organizer resolves via the embed buttons.
+                                                    _enter_draw_pending(rec["event"], tied)
+                                                    db.save_event(rec["db_id"], rec["event"])
+                                                else:
+                                                    _complete_event_with_winner(rec["event"], winner)
+                                                    db.save_event(rec["db_id"], rec["event"])
+                                                    if winner:
+                                                        db.save_voting_history(
+                                                            guild_id, channel_id,
+                                                            rec["event"].get("suggestions", []),
+                                                            winner,
+                                                        )
+                                        if finalized:
+                                            await _update_event_embed(db_id)
+                                            lang = db.get_guild_language(guild_id)
+                                            if tied:
+                                                result_str = "draw between " + ", ".join(
+                                                    format_layer_short(s) for s in tied)
+                                            else:
+                                                result_str = "Winner: " + (
+                                                    format_layer_short(winner) if winner else "None")
+                                            await send_event_log(
+                                                event, db_id,
+                                                f"Poll ended in <#{channel_id}>. {result_str}",
+                                                guild_id=guild_id,
+                                                lang=lang,
+                                            )
                         except discord.NotFound:
                             pass
                         except Exception as e:
