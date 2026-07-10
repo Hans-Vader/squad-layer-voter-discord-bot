@@ -394,7 +394,7 @@ def format_suggestion_entry(index: int, suggestion: dict,
 _RANK_MEDALS = {1: "🥇", 2: "🥈", 3: "🥉"}
 
 
-def format_vote_bar(count: int, total: int, width: int = 10) -> str:
+def format_vote_bar(count: int, total: int, width: int = 20) -> str:
     """Unicode block bar whose length is the count's share of ``total``.
 
     Scaling to the total (not the leader) keeps the bar and the printed
