@@ -2,31 +2,31 @@ import utils
 
 
 def test_vote_bar_empty_when_no_votes():
-    assert utils.format_vote_bar(0, 10) == "░" * 10
+    assert utils.format_vote_bar(0, 10) == "░" * 20
 
 
 def test_vote_bar_half():
-    assert utils.format_vote_bar(5, 10) == "█" * 5 + "░" * 5
+    assert utils.format_vote_bar(5, 10) == "█" * 10 + "░" * 10
 
 
 def test_vote_bar_full_at_100_percent():
-    assert utils.format_vote_bar(10, 10) == "█" * 10
+    assert utils.format_vote_bar(10, 10) == "█" * 20
 
 
 def test_vote_bar_never_rounds_a_real_vote_to_empty():
     # 1 of 100 rounds to 0 blocks mathematically; force at least one.
     bar = utils.format_vote_bar(1, 100)
     assert bar.startswith("█")
-    assert len(bar) == 10
+    assert len(bar) == 20
 
 
 def test_vote_bar_all_empty_when_total_is_zero():
-    assert utils.format_vote_bar(3, 0) == "░" * 10
+    assert utils.format_vote_bar(3, 0) == "░" * 20
 
 
 def test_vote_bar_rounds_half_up():
-    # 1 of 4 (25%) => 2.5 blocks; half-up => 3 (Python round() would give 2).
-    assert utils.format_vote_bar(1, 4) == "█" * 3 + "░" * 7
+    # 1 of 8 (12.5%) => 2.5 blocks; half-up => 3 (Python round() would give 2).
+    assert utils.format_vote_bar(1, 8) == "█" * 3 + "░" * 17
 
 
 def test_vote_result_entry_floors_real_vote_percentage():
