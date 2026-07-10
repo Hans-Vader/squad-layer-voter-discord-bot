@@ -500,6 +500,26 @@ _STRINGS: dict[str, dict[str, str]] = {
         "de": "⚠️ Die Stichwahl konnte nicht gestartet werden. Das Unentschieden ist wieder offen — bitte erneut versuchen.",
         "en": "⚠️ Couldn't start the runoff. The draw is open again — please try again.",
     },
+    "runoff.ping_prompt": {
+        "de": "Wer soll für die Stichwahl benachrichtigt werden?",
+        "en": "Who should be notified for the runoff?",
+    },
+    "button.runoff_ping_voters": {
+        "de": "Stichwahl + vorherige Voter pingen",
+        "en": "Runoff + ping previous voters",
+    },
+    "button.runoff_ping_roles": {
+        "de": "Stichwahl + Berechtigte (Rollen/User) pingen",
+        "en": "Runoff + ping eligible (roles/users)",
+    },
+    "button.runoff_ping_none": {
+        "de": "Stichwahl ohne Ping",
+        "en": "Runoff without ping",
+    },
+    "runoff.ping_message": {
+        "de": "🔁 Neue Stichwahl! Bitte erneut abstimmen:",
+        "en": "🔁 New runoff! Please vote again:",
+    },
     "vote.poll_question": {
         "de": "Welcher Layer soll gespielt werden?",
         "en": "Which layer should be played?",

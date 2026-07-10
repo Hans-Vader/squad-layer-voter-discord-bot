@@ -468,6 +468,36 @@ def format_layer_poll_option(suggestion: dict) -> str:
     return text
 
 
+def build_ping_messages(role_ids: list, user_ids: list, header: str,
+                        limit: int = 1900) -> list[str]:
+    """Build the mention message(s) for a runoff ping.
+
+    Roles render as ``<@&id>``, users as ``<@id>``. Mentions are split so no
+    message exceeds ``limit`` characters (Discord's hard cap is 2000; the
+    default leaves headroom for the header line). The header is prepended only
+    to the first message. Returns [] when there's nobody to ping.
+    """
+    mentions = [f"<@&{r}>" for r in role_ids] + [f"<@{u}>" for u in user_ids]
+    if not mentions:
+        return []
+    header_len = len(header) + 1  # header + newline, reserved on the first message
+    messages: list[str] = []
+    chunk: list[str] = []
+    size = 0
+    for m in mentions:
+        add = len(m) + (1 if chunk else 0)  # +1 for the joining space
+        budget = limit - (header_len if not messages else 0)  # header on message 0
+        if chunk and size + add > budget:
+            messages.append(" ".join(chunk))
+            chunk, size, add = [], 0, len(m)
+        chunk.append(m)
+        size += add
+    if chunk:
+        messages.append(" ".join(chunk))
+    messages[0] = f"{header}\n{messages[0]}"
+    return messages
+
+
 def suggestion_matches(s1: dict, s2: dict) -> bool:
     """Check if two suggestions represent the exact same layer combination."""
     keys = ("map_name", "gamemode", "layer_version",
