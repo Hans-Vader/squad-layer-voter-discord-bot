@@ -57,9 +57,9 @@ def test_copy_text_contains_all_sections_in_order(squadcalc):
     assert "⚙️" not in text
     assert "\\`\\`\\`AdminChangeLayer Fallujah_AAS_v1 USMC+LightInfantry IMF+LightInfantry\\`\\`\\`" in text
     # Vehicle sections: team 1 before team 2, combat classes first. Short
-    # content → shrink ladder inactive → full headers and class labels.
-    assert "🚛 Team 1 — United States Marine Corps/LightInfantry Fahrzeuge" in text
-    assert "🚛 Team 2 — Irregular Militia Forces/LightInfantry Fahrzeuge" in text
+    # content → shrink ladder inactive → class labels kept.
+    assert "🚛 Team 1 — USMC\n" in text
+    assert "🚛 Team 2 — IMF\n" in text
     assert "🎯 3× MATV TOW [ATGM]" in text
     assert "⚔️ 1× T-62 [MBT]" in text
     assert text.index("Team 1") < text.index("Team 2")

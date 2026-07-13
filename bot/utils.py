@@ -583,9 +583,8 @@ def build_winner_copy_text(event: dict, lang: str = "en") -> Optional[str]:
 
     Rendered as message markdown with escaped ```/[] so select-copy carries
     the formatting along. Kept within WINNER_COPY_MAX pasted chars via a
-    shrink ladder: full format → short team headers → no vehicle class
-    labels → trimmed vehicle lists. Returns None when the event has no
-    winner.
+    shrink ladder: full format → no vehicle class labels → trimmed vehicle
+    lists. Returns None when the event has no winner.
     """
     winner = event.get("winning_layer")
     if not winner:
@@ -595,8 +594,6 @@ def build_winner_copy_text(event: dict, lang: str = "en") -> Optional[str]:
     gamemode = winner.get("gamemode", "?")
     version = winner.get("layer_version", "")
     mode_str = f"{gamemode} {version}".strip() if version else gamemode
-    t1_name = winner.get("team1_faction_name") or winner.get("team1_faction", "?")
-    t2_name = winner.get("team2_faction_name") or winner.get("team2_faction", "?")
     t1u = winner.get("team1_unit", "?")
     t2u = winner.get("team2_unit", "?")
 
@@ -611,37 +608,34 @@ def build_winner_copy_text(event: dict, lang: str = "en") -> Optional[str]:
               f" vs {winner.get('team2_faction', '?')}/{t2u}")
 
     command = event.get("winning_layer_command")
-    teams = [(1, t1_name, t1u, winner.get("team1_vehicles")),
-             (2, t2_name, t2u, winner.get("team2_vehicles"))]
+    teams = [(1, winner.get("team1_faction", "?"), winner.get("team1_vehicles")),
+             (2, winner.get("team2_faction", "?"), winner.get("team2_vehicles"))]
 
-    def assemble(short_headers: bool, with_class: bool, budget: int) -> str:
+    def assemble(with_class: bool, budget: int) -> str:
         parts = [first]
         if command:
             # Escaped backticks render as visible ``` so select-copy (and the
             # code-block copy button, which strips fences) still yields a
             # snippet that pastes as a real code block elsewhere.
             parts.append(f"\\`\\`\\`{command}\\`\\`\\`")
-        for team_no, name, unit, vehicles in teams:
+        for team_no, fac_id, vehicles in teams:
             if vehicles:
-                who = "" if short_headers else f"{name}/{unit} "
-                parts.append(
-                    f"🚛 Team {team_no} — {who}{t('vehicles.label', lang)}\n"
-                    + format_vehicle_list(vehicles, lang, with_class, budget)
-                )
+                parts.append(f"🚛 Team {team_no} — {fac_id}\n"
+                             + format_vehicle_list(vehicles, lang, with_class, budget))
         return "\n\n".join(parts)
 
     def pasted_len(text: str) -> int:
         return len(text.replace("\\", ""))
 
-    for short_headers, with_class in ((False, True), (True, True), (True, False)):
-        text = assemble(short_headers, with_class, 1024)
+    for with_class in (True, False):
+        text = assemble(with_class, 1024)
         if pasted_len(text) <= WINNER_COPY_MAX:
             return text
 
     # Backstop: shrink both lists' budgets until the whole text fits.
     # ponytail: linear step-down, ≤25 cheap string builds; fine at this size.
     for budget in range(1024, 40, -40):
-        text = assemble(True, False, budget)
+        text = assemble(False, budget)
         if pasted_len(text) <= WINNER_COPY_MAX:
             return text
     return text  # pathological (fixed parts alone exceed the limit)
