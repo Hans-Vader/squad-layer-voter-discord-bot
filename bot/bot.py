@@ -1062,15 +1062,25 @@ class VotingPhaseView(ui.View):
 class CompletedPhaseView(ui.View):
     """View attached to a completed event's embed.
 
-    Only the Admin button — vote ended, the user-facing actions are all
-    behind us. The button still routes to the standard admin panel so the
-    organizer can edit metadata or delete the event from the embed
-    without touching slash commands.
+    Keeps the Join Voting button (points latecomers at the poll thread to read
+    the final results) plus the Admin button, which routes to the standard
+    admin panel so the organizer can edit metadata or delete the event from
+    the embed without touching slash commands.
     """
 
     def __init__(self, db_id: int, lang: str = "en"):
         super().__init__(timeout=None)
         self.db_id = db_id
+
+        join = ui.Button(
+            label=t("button.join_vote", lang),
+            style=discord.ButtonStyle.success,
+            custom_id=f"event_action:join_vote:{db_id}",
+            emoji="🗳️",
+        )
+        join.callback = lambda i: handle_join_vote(i, db_id)
+        self.add_item(join)
+
         _add_admin_button(self, db_id, lang)
 
 
@@ -2841,7 +2851,7 @@ async def handle_join_vote(interaction: discord.Interaction, db_id: int):
         return
 
     event = record["event"]
-    if event.get("phase") != "voting":
+    if event.get("phase") not in ("voting", "completed"):
         await interaction.response.send_message(t("vote.not_in_voting_phase", lang), ephemeral=True)
         return
 

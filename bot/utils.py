@@ -244,12 +244,15 @@ def _vehtype_info(token: str) -> tuple:
     return _VEHTYPE.get(token, ("🚗", token or "?", 99))
 
 
-def format_vehicle_list(vehicles: list, lang: str = "en") -> str:
+def format_vehicle_list(vehicles: list, lang: str = "en",
+                        with_class: bool = True, max_len: int = 1024) -> str:
     """Render a unit's vehicle list as embed text, combat classes first.
 
-    One line per vehicle: "{emoji} {count}× {name} [{class}]". Capped to a
-    Discord field's 1024 chars via fit_lines_to_field (with a localized
-    "+N more" tail). Returns the localized "no vehicles" string when empty.
+    One line per vehicle: "{emoji} {count}× {name} [{class}]" (the trailing
+    class label is dropped when with_class is False). Capped to ``max_len``
+    chars (default: a Discord field's 1024) via fit_lines_to_field (with a
+    localized "+N more" tail). Returns the localized "no vehicles" string
+    when empty.
     """
     if not vehicles:
         return t("vehicles.none", lang)
@@ -261,8 +264,10 @@ def format_vehicle_list(vehicles: list, lang: str = "en") -> str:
     for v in ordered:
         emoji, label, _ = _vehtype_info(_vehicle_class(v))
         count = v.get("count", 1)
-        lines.append(f"{emoji} {count}× {v.get('name', '?')} [{label}]")
-    return fit_lines_to_field(lines, lambda n: t("vehicles.more", lang, count=n))
+        suffix = f" [{label}]" if with_class else ""
+        lines.append(f"{emoji} {count}× {v.get('name', '?')}{suffix}")
+    return fit_lines_to_field(lines, lambda n: t("vehicles.more", lang, count=n),
+                              max_len)
 
 
 def build_squadcalc_url(suggestion: dict) -> Optional[str]:
@@ -567,12 +572,20 @@ def _embed_total_chars(embed: Embed) -> int:
     return total
 
 
+# The copy text is pasted into a Discord scheduled-event description, which
+# caps at 1000 chars (counting the pasted text, i.e. without our escape
+# backslashes).
+WINNER_COPY_MAX = 1000
+
+
 def build_winner_copy_text(event: dict, lang: str = "en") -> Optional[str]:
     """Plain-text (copy-friendly) version of the completed-embed winner block.
 
-    Same content and fallbacks as the winner section in build_event_embed,
-    but as message markdown so Discord's "Copy Text" reproduces it 1:1 when
-    pasted elsewhere. Returns None when the event has no winner.
+    Rendered as message markdown with escaped ```/[] so select-copy carries
+    the formatting along. Kept within WINNER_COPY_MAX pasted chars via a
+    shrink ladder: full format → short team headers → no vehicle class
+    labels → trimmed vehicle lists. Returns None when the event has no
+    winner.
     """
     winner = event.get("winning_layer")
     if not winner:
@@ -582,8 +595,8 @@ def build_winner_copy_text(event: dict, lang: str = "en") -> Optional[str]:
     gamemode = winner.get("gamemode", "?")
     version = winner.get("layer_version", "")
     mode_str = f"{gamemode} {version}".strip() if version else gamemode
-    t1 = winner.get("team1_faction_name") or winner.get("team1_faction", "?")
-    t2 = winner.get("team2_faction_name") or winner.get("team2_faction", "?")
+    t1_name = winner.get("team1_faction_name") or winner.get("team1_faction", "?")
+    t2_name = winner.get("team2_faction_name") or winner.get("team2_faction", "?")
     t1u = winner.get("team1_unit", "?")
     t2u = winner.get("team2_unit", "?")
 
@@ -593,28 +606,45 @@ def build_winner_copy_text(event: dict, lang: str = "en") -> Optional[str]:
         # Escaped brackets render the masked-link syntax as visible text, so
         # select-copy carries the full [SquadCalc](url) markdown along.
         first += f" — 🔗 \\[SquadCalc\\]({url})"
-    first += f"\n⚔️ {t1}/{t1u} vs {t2}/{t2u}"
-
-    parts = [first]
+    # Short faction ids: the full names still appear in the team headers.
+    first += (f"\n⚔️ {winner.get('team1_faction', '?')}/{t1u}"
+              f" vs {winner.get('team2_faction', '?')}/{t2u}")
 
     command = event.get("winning_layer_command")
-    if command:
-        # Escaped backticks render as visible ``` so select-copy (and the
-        # code-block copy button, which strips fences) still yields a snippet
-        # that pastes as a real code block elsewhere.
-        parts.append(f"⚙️ {t('embed.admin_command_header', lang)}\n\\`\\`\\`{command}\\`\\`\\`")
+    teams = [(1, t1_name, t1u, winner.get("team1_vehicles")),
+             (2, t2_name, t2u, winner.get("team2_vehicles"))]
 
-    for team_no, name, unit, vehicles in (
-        (1, t1, t1u, winner.get("team1_vehicles")),
-        (2, t2, t2u, winner.get("team2_vehicles")),
-    ):
-        if vehicles:
-            parts.append(
-                f"🚛 Team {team_no} — {name}/{unit} {t('vehicles.label', lang)}\n"
-                + format_vehicle_list(vehicles, lang)
-            )
+    def assemble(short_headers: bool, with_class: bool, budget: int) -> str:
+        parts = [first]
+        if command:
+            # Escaped backticks render as visible ``` so select-copy (and the
+            # code-block copy button, which strips fences) still yields a
+            # snippet that pastes as a real code block elsewhere.
+            parts.append(f"\\`\\`\\`{command}\\`\\`\\`")
+        for team_no, name, unit, vehicles in teams:
+            if vehicles:
+                who = "" if short_headers else f"{name}/{unit} "
+                parts.append(
+                    f"🚛 Team {team_no} — {who}{t('vehicles.label', lang)}\n"
+                    + format_vehicle_list(vehicles, lang, with_class, budget)
+                )
+        return "\n\n".join(parts)
 
-    return "\n\n".join(parts)
+    def pasted_len(text: str) -> int:
+        return len(text.replace("\\", ""))
+
+    for short_headers, with_class in ((False, True), (True, True), (True, False)):
+        text = assemble(short_headers, with_class, 1024)
+        if pasted_len(text) <= WINNER_COPY_MAX:
+            return text
+
+    # Backstop: shrink both lists' budgets until the whole text fits.
+    # ponytail: linear step-down, ≤25 cheap string builds; fine at this size.
+    for budget in range(1024, 40, -40):
+        text = assemble(True, False, budget)
+        if pasted_len(text) <= WINNER_COPY_MAX:
+            return text
+    return text  # pathological (fixed parts alone exceed the limit)
 
 
 def build_event_embed(event: dict, settings: dict, db_id: int,
