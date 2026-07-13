@@ -587,12 +587,15 @@ def build_winner_copy_text(event: dict, lang: str = "en") -> Optional[str]:
     t1u = winner.get("team1_unit", "?")
     t2u = winner.get("team2_unit", "?")
 
-    header = f"🗺️ **{map_name}** — {mode_str}"
+    first = f"🗺️ **{map_name}** — {mode_str}\n⚔️ {t1}/{t1u} vs {t2}/{t2u}"
     url = build_squadcalc_url(winner)
     if url:
-        header += f" — [SquadCalc 🗺️]({url})"
+        # Plain URL (not a masked [label](url) link): survives select-copy, and
+        # masked links don't render in regular user messages anyway. <> keeps
+        # the pasted message free of an embed preview.
+        first += f"\n🔗 SquadCalc: <{url}>"
 
-    parts = [f"{header}\n⚔️ {t1}/{t1u} vs {t2}/{t2u}"]
+    parts = [first]
 
     command = event.get("winning_layer_command")
     if command:
