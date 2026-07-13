@@ -596,7 +596,10 @@ def build_winner_copy_text(event: dict, lang: str = "en") -> Optional[str]:
 
     command = event.get("winning_layer_command")
     if command:
-        parts.append(f"⚙️ {t('embed.admin_command_header', lang)}\n```\n{command}\n```")
+        # Escaped backticks render as visible ``` so select-copy (and the
+        # code-block copy button, which strips fences) still yields a snippet
+        # that pastes as a real code block elsewhere.
+        parts.append(f"⚙️ {t('embed.admin_command_header', lang)}\n\\`\\`\\`{command}\\`\\`\\`")
 
     for team_no, name, unit, vehicles in (
         (1, t1, t1u, winner.get("team1_vehicles")),

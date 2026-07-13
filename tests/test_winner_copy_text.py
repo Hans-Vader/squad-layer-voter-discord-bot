@@ -47,14 +47,15 @@ def test_copy_text_contains_all_sections_in_order(squadcalc):
     assert text.startswith("🗺️ **Fallujah** — AAS v1 — [SquadCalc 🗺️](https://squadcalc.app/?")
     assert "team1unit=USMC_LO_LightInfantry" in text
     assert "⚔️ United States Marine Corps/LightInfantry vs Irregular Militia Forces/LightInfantry" in text
-    assert "```\nAdminChangeLayer Fallujah_AAS_v1 USMC+LightInfantry IMF+LightInfantry\n```" in text
+    # Fences are escaped (visible ```), so copying the rendered text keeps them.
+    assert "\\`\\`\\`AdminChangeLayer Fallujah_AAS_v1 USMC+LightInfantry IMF+LightInfantry\\`\\`\\`" in text
     # Vehicle sections: team 1 before team 2, combat classes first.
     assert "🚛 Team 1 — United States Marine Corps/LightInfantry Fahrzeuge" in text
     assert "🚛 Team 2 — Irregular Militia Forces/LightInfantry Fahrzeuge" in text
     assert "🎯 3× MATV TOW [ATGM]" in text
     assert "⚔️ 1× T-62 [MBT]" in text
     assert text.index("Team 1") < text.index("Team 2")
-    assert text.index("```") < text.index("Team 1")  # command block before vehicles
+    assert text.index("\\`\\`\\`") < text.index("Team 1")  # command block before vehicles
 
 
 def test_copy_text_omits_squadcalc_link_for_supermod(squadcalc):
@@ -74,5 +75,5 @@ def test_copy_text_skips_missing_optional_parts(squadcalc):
     event.pop("winning_layer_command")
     text = utils.build_winner_copy_text(event, "en")
     assert "🚛" not in text
-    assert "```" not in text
+    assert "`" not in text
     assert "⚔️ United States Marine Corps" in text
