@@ -567,6 +567,50 @@ def _embed_total_chars(embed: Embed) -> int:
     return total
 
 
+def build_winner_copy_text(event: dict, lang: str = "en") -> Optional[str]:
+    """Plain-text (copy-friendly) version of the completed-embed winner block.
+
+    Same content and fallbacks as the winner section in build_event_embed,
+    but as message markdown so Discord's "Copy Text" reproduces it 1:1 when
+    pasted elsewhere. Returns None when the event has no winner.
+    """
+    winner = event.get("winning_layer")
+    if not winner:
+        return None
+
+    map_name = winner.get("map_name", "?")
+    gamemode = winner.get("gamemode", "?")
+    version = winner.get("layer_version", "")
+    mode_str = f"{gamemode} {version}".strip() if version else gamemode
+    t1 = winner.get("team1_faction_name") or winner.get("team1_faction", "?")
+    t2 = winner.get("team2_faction_name") or winner.get("team2_faction", "?")
+    t1u = winner.get("team1_unit", "?")
+    t2u = winner.get("team2_unit", "?")
+
+    header = f"🗺️ **{map_name}** — {mode_str}"
+    url = build_squadcalc_url(winner)
+    if url:
+        header += f" — [SquadCalc 🗺️]({url})"
+
+    parts = [f"{header}\n⚔️ {t1}/{t1u} vs {t2}/{t2u}"]
+
+    command = event.get("winning_layer_command")
+    if command:
+        parts.append(f"⚙️ {t('embed.admin_command_header', lang)}\n```\n{command}\n```")
+
+    for team_no, name, unit, vehicles in (
+        (1, t1, t1u, winner.get("team1_vehicles")),
+        (2, t2, t2u, winner.get("team2_vehicles")),
+    ):
+        if vehicles:
+            parts.append(
+                f"🚛 Team {team_no} — {name}/{unit} {t('vehicles.label', lang)}\n"
+                + format_vehicle_list(vehicles, lang)
+            )
+
+    return "\n\n".join(parts)
+
+
 def build_event_embed(event: dict, settings: dict, db_id: int,
                       vote_counts: Optional[dict] = None) -> Embed:
     """Build the main event embed displayed in the channel.

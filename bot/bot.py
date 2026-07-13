@@ -30,6 +30,7 @@ from utils import (
     format_layer_short, format_layer_poll_option, suggestion_matches,
     format_vehicle_list, build_ping_messages,
     build_event_embed, build_squadcalc_url, fit_lines_to_field,
+    build_winner_copy_text,
     set_log_channel, send_to_log_channel,
     normalize_event_name,
     EVENT_NAME_MAX_LENGTH,
@@ -2246,12 +2247,15 @@ async def handle_admin_panel(interaction: discord.Interaction, db_id: int):
     )
 
     suggestion_count = len(event.get("suggestions", []))
-    view = _bind(AdminPanelView(phase, lang, record["db_id"], suggestion_count), interaction)
+    has_winner = bool(event.get("winning_layer"))
+    view = _bind(AdminPanelView(phase, lang, record["db_id"], suggestion_count,
+                                has_winner=has_winner), interaction)
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
 class AdminPanelView(AutoDisableView):
-    def __init__(self, phase: str, lang: str, db_id: int, suggestion_count: int = 0):
+    def __init__(self, phase: str, lang: str, db_id: int, suggestion_count: int = 0,
+                 has_winner: bool = False):
         super().__init__(timeout=120)
         self.lang = lang
         self.db_id = db_id
@@ -2265,6 +2269,9 @@ class AdminPanelView(AutoDisableView):
             self.add_item(AdminButton("reopen_suggestions", t("admin.reopen_suggestions", lang), discord.ButtonStyle.secondary, "🔄"))
         elif phase == "voting":
             self.add_item(AdminButton("end_vote", t("admin.end_vote", lang), discord.ButtonStyle.danger, "🏁"))
+        elif phase == "completed" and has_winner:
+            # Copy-friendly plain-text version of the winner block.
+            self.add_item(AdminButton("copy_result", t("admin.copy_result", lang), discord.ButtonStyle.secondary, "📋"))
 
         # Removing a suggestion only makes sense before the poll is live.
         if phase in ("suggestions_open", "suggestions_closed") and suggestion_count > 0:
@@ -2311,6 +2318,8 @@ class AdminButton(ui.Button):
             await admin_select_for_vote(interaction, db_id)
         elif self.action == "end_vote":
             await admin_end_vote(interaction, db_id)
+        elif self.action == "copy_result":
+            await admin_copy_result(interaction, db_id)
         elif self.action == "remove_suggestion":
             await admin_remove_suggestion(interaction, db_id)
         elif self.action == "edit_event":
@@ -2320,11 +2329,11 @@ class AdminButton(ui.Button):
         elif self.action == "delete_event":
             await admin_delete_event(interaction, db_id)
 
-        # Every action except the two that post a separate ephemeral ack
+        # Every action except those that post a separate ephemeral ack
         # replaces the panel message with a sub-dialog or result, so retire the
         # panel's timer — otherwise its 120s timeout would later grey out
         # whatever now occupies that message.
-        if self.action not in ("open_suggestions", "reopen_suggestions"):
+        if self.action not in ("open_suggestions", "reopen_suggestions", "copy_result"):
             self.view.stop()
 
 
@@ -3111,6 +3120,37 @@ async def admin_end_vote(interaction: discord.Interaction, db_id: int):
         guild_id=interaction.guild_id,
         lang=lang,
     )
+
+
+async def admin_copy_result(interaction: discord.Interaction, db_id: int):
+    """Send the winner block as a copy-friendly ephemeral plain-text message."""
+    settings = db.get_guild_settings(interaction.guild_id)
+    lang = settings.get("language", "en") if settings else "en"
+
+    record = db.get_event_by_db_id(interaction.guild_id, db_id)
+    if not record:
+        await interaction.response.send_message(t("event.no_event", lang), ephemeral=True)
+        return
+    text = build_winner_copy_text(record["event"], lang)
+    if not text:
+        await interaction.response.send_message(t("vote.no_winner", lang), ephemeral=True)
+        return
+
+    # Discord caps message content at 2000 chars; split on section breaks
+    # when the two vehicle lists push the text over the limit.
+    chunks, current = [], ""
+    for part in text.split("\n\n"):
+        candidate = f"{current}\n\n{part}" if current else part
+        if len(candidate) > 2000 and current:
+            chunks.append(current)
+            candidate = part
+        current = candidate
+    chunks.append(current)
+
+    await interaction.response.send_message(
+        chunks[0], ephemeral=True, suppress_embeds=True)
+    for chunk in chunks[1:]:
+        await interaction.followup.send(chunk, ephemeral=True, suppress_embeds=True)
 
 
 def _tally_poll(answer_counts: list[tuple[str, int]],

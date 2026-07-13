@@ -934,6 +934,10 @@ _STRINGS: dict[str, dict[str, str]] = {
         "de": "Abstimmung beenden",
         "en": "End Vote",
     },
+    "admin.copy_result": {
+        "de": "Ergebnis-Text",
+        "en": "Result text",
+    },
     "admin.delete_event": {
         "de": "Event löschen",
         "en": "Delete Event",
