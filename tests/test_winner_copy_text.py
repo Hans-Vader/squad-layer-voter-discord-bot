@@ -44,9 +44,8 @@ def squadcalc(monkeypatch):
 
 def test_copy_text_contains_all_sections_in_order(squadcalc):
     text = utils.build_winner_copy_text(_event(), "de")
-    assert text.startswith("🗺️ **Fallujah** — AAS v1\n")
-    # Plain <url> (copyable), not a masked [label](url) link.
-    assert "🔗 SquadCalc: <https://squadcalc.app/?" in text
+    # Masked-link syntax with escaped brackets (visible text, survives copy).
+    assert text.startswith("🗺️ Fallujah — AAS v1 — 🔗 \\[SquadCalc\\](https://squadcalc.app/?")
     assert "team1unit=USMC_LO_LightInfantry" in text
     assert "⚔️ United States Marine Corps/LightInfantry vs Irregular Militia Forces/LightInfantry" in text
     # Fences are escaped (visible ```), so copying the rendered text keeps them.
@@ -64,7 +63,7 @@ def test_copy_text_omits_squadcalc_link_for_supermod(squadcalc):
     text = utils.build_winner_copy_text(_event(source="supermod"), "en")
     assert "squadcalc.app" not in text
     assert "🔗" not in text
-    assert text.startswith("🗺️ **Fallujah** — AAS v1\n")
+    assert text.startswith("🗺️ Fallujah — AAS v1\n")
 
 
 def test_copy_text_none_without_winner():
