@@ -28,8 +28,9 @@ from utils import (
     has_organizer_role, is_guild_admin,
     check_role_gate,
     format_layer_short, format_layer_poll_option, suggestion_matches,
-    format_vehicle_list,
+    format_vehicle_list, build_ping_messages,
     build_event_embed, build_squadcalc_url, fit_lines_to_field,
+    build_winner_copy_text,
     set_log_channel, send_to_log_channel,
     normalize_event_name,
     EVENT_NAME_MAX_LENGTH,
@@ -2246,12 +2247,15 @@ async def handle_admin_panel(interaction: discord.Interaction, db_id: int):
     )
 
     suggestion_count = len(event.get("suggestions", []))
-    view = _bind(AdminPanelView(phase, lang, record["db_id"], suggestion_count), interaction)
+    has_winner = bool(event.get("winning_layer"))
+    view = _bind(AdminPanelView(phase, lang, record["db_id"], suggestion_count,
+                                has_winner=has_winner), interaction)
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
 class AdminPanelView(AutoDisableView):
-    def __init__(self, phase: str, lang: str, db_id: int, suggestion_count: int = 0):
+    def __init__(self, phase: str, lang: str, db_id: int, suggestion_count: int = 0,
+                 has_winner: bool = False):
         super().__init__(timeout=120)
         self.lang = lang
         self.db_id = db_id
@@ -2265,6 +2269,9 @@ class AdminPanelView(AutoDisableView):
             self.add_item(AdminButton("reopen_suggestions", t("admin.reopen_suggestions", lang), discord.ButtonStyle.secondary, "🔄"))
         elif phase == "voting":
             self.add_item(AdminButton("end_vote", t("admin.end_vote", lang), discord.ButtonStyle.danger, "🏁"))
+        elif phase == "completed" and has_winner:
+            # Copy-friendly plain-text version of the winner block.
+            self.add_item(AdminButton("copy_result", t("admin.copy_result", lang), discord.ButtonStyle.secondary, "📋"))
 
         # Removing a suggestion only makes sense before the poll is live.
         if phase in ("suggestions_open", "suggestions_closed") and suggestion_count > 0:
@@ -2311,6 +2318,8 @@ class AdminButton(ui.Button):
             await admin_select_for_vote(interaction, db_id)
         elif self.action == "end_vote":
             await admin_end_vote(interaction, db_id)
+        elif self.action == "copy_result":
+            await admin_copy_result(interaction, db_id)
         elif self.action == "remove_suggestion":
             await admin_remove_suggestion(interaction, db_id)
         elif self.action == "edit_event":
@@ -2320,11 +2329,11 @@ class AdminButton(ui.Button):
         elif self.action == "delete_event":
             await admin_delete_event(interaction, db_id)
 
-        # Every action except the two that post a separate ephemeral ack
+        # Every action except those that post a separate ephemeral ack
         # replaces the panel message with a sub-dialog or result, so retire the
         # panel's timer — otherwise its 120s timeout would later grey out
         # whatever now occupies that message.
-        if self.action not in ("open_suggestions", "reopen_suggestions"):
+        if self.action not in ("open_suggestions", "reopen_suggestions", "copy_result"):
             self.view.stop()
 
 
@@ -2868,13 +2877,18 @@ async def handle_join_vote(interaction: discord.Interaction, db_id: int):
 
 
 async def _start_poll(interaction: discord.Interaction, db_id: int,
-                      selected_ids: list[str], reuse_thread: bool = False):
+                      selected_ids: list[str], reuse_thread: bool = False,
+                      ping_user_ids: Optional[list[int]] = None,
+                      ping_role_ids: Optional[list[int]] = None):
     """Create a Discord native poll for the selected layers.
 
     ``reuse_thread=True`` (runoff): post into the event's existing voting thread
     instead of creating a new one, and leave ``vote_thread_id`` untouched — avoids
     a second thread and re-pinging a gated role. In that case the interaction has
     already been responded to (by the runoff modal), so the ack edit is skipped.
+
+    ``ping_user_ids`` / ``ping_role_ids``: if given, post a follow-up message that
+    mentions them after the poll (runoff opt-in re-ping). Empty/None → no ping.
     """
     record = db.get_event_by_db_id(interaction.guild_id, db_id)
     if not record:
@@ -2916,6 +2930,17 @@ async def _start_poll(interaction: discord.Interaction, db_id: int,
         voting_thread = await _create_voting_thread(interaction.channel, event, db_id, lang)
         target = voting_thread if voting_thread is not None else interaction.channel
     poll_message = await target.send(poll=poll)
+
+    # Runoff opt-in: re-ping the chosen recipients into the same thread as the poll.
+    for content in build_ping_messages(ping_role_ids or [], ping_user_ids or [],
+                                       t("runoff.ping_message", lang)):
+        try:
+            await target.send(
+                content,
+                allowed_mentions=discord.AllowedMentions(users=True, roles=True),
+            )
+        except discord.HTTPException as e:
+            logger.warning(f"Failed to send runoff ping for event {db_id}: {e}")
 
     poll_end_time = (
         getattr(poll_message.poll, "expires_at", None)
@@ -3097,6 +3122,37 @@ async def admin_end_vote(interaction: discord.Interaction, db_id: int):
     )
 
 
+async def admin_copy_result(interaction: discord.Interaction, db_id: int):
+    """Send the winner block as a copy-friendly ephemeral plain-text message."""
+    settings = db.get_guild_settings(interaction.guild_id)
+    lang = settings.get("language", "en") if settings else "en"
+
+    record = db.get_event_by_db_id(interaction.guild_id, db_id)
+    if not record:
+        await interaction.response.send_message(t("event.no_event", lang), ephemeral=True)
+        return
+    text = build_winner_copy_text(record["event"], lang)
+    if not text:
+        await interaction.response.send_message(t("vote.no_winner", lang), ephemeral=True)
+        return
+
+    # Discord caps message content at 2000 chars; split on section breaks
+    # when the two vehicle lists push the text over the limit.
+    chunks, current = [], ""
+    for part in text.split("\n\n"):
+        candidate = f"{current}\n\n{part}" if current else part
+        if len(candidate) > 2000 and current:
+            chunks.append(current)
+            candidate = part
+        current = candidate
+    chunks.append(current)
+
+    await interaction.response.send_message(
+        chunks[0], ephemeral=True, suppress_embeds=True)
+    for chunk in chunks[1:]:
+        await interaction.followup.send(chunk, ephemeral=True, suppress_embeds=True)
+
+
 def _tally_poll(answer_counts: list[tuple[str, int]],
                 selected: list[dict]) -> tuple[Optional[dict], list[dict]]:
     """Decide a poll's outcome from (answer_text, vote_count) pairs.
@@ -3167,6 +3223,29 @@ async def _resolve_poll_result(channel: discord.TextChannel,
         logger.error(f"Error resolving poll winner: {e}")
 
     return None, []
+
+
+async def _fetch_poll_voter_ids(channel: discord.abc.Messageable, event: dict,
+                                poll_msg_id: int) -> list[int]:
+    """Fetch the distinct user ids that voted on the (finalised) poll.
+
+    Discord native polls don't expose voters to us until we ask: this pulls
+    them live from the poll message via ``PollAnswer.voters()``. With
+    ``allow_multiple_votes`` the same user appears under several answers, so a
+    set dedupes them. Best-effort — returns [] if the poll message is gone.
+    """
+    ids: set[int] = set()
+    try:
+        target = await _resolve_poll_target(channel, event)
+        message = await target.fetch_message(poll_msg_id)
+        if not message.poll:
+            return []
+        for answer in message.poll.answers:
+            async for user in answer.voters():
+                ids.add(user.id)
+    except discord.HTTPException as e:
+        logger.warning(f"Could not fetch poll voters for {poll_msg_id}: {e}")
+    return sorted(ids)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -3241,14 +3320,65 @@ async def _confirm_draw_random(interaction: discord.Interaction, db_id: int) -> 
                               "draw.resolved_random", "random")
 
 
+class RunoffPingChoiceView(AutoDisableView):
+    """Ephemeral step before a runoff: let the organizer pick who gets re-pinged.
+
+    Each choice opens the duration modal (the "confirm" step); the ``roles``
+    button is omitted for open events (no allow-list to ping).
+    """
+
+    def __init__(self, db_id: int, lang: str, tied_ids: list[str],
+                 default_hours: int, gated: bool):
+        super().__init__(timeout=120)
+        self.db_id = db_id
+        self.lang = lang
+        self.tied_ids = tied_ids
+        self.default_hours = default_hours
+
+        self._add_choice("voters", "button.runoff_ping_voters",
+                         discord.ButtonStyle.primary, "🔁")
+        if gated:
+            self._add_choice("roles", "button.runoff_ping_roles",
+                             discord.ButtonStyle.secondary, "🔔")
+        self._add_choice("none", "button.runoff_ping_none",
+                         discord.ButtonStyle.secondary, "🚫")
+
+        cancel = ui.Button(label=t("general.cancel", lang),
+                           style=discord.ButtonStyle.secondary, emoji="❌")
+        cancel.callback = self._cancel
+        self.add_item(cancel)
+
+    def _add_choice(self, mode: str, label_key: str,
+                    style: discord.ButtonStyle, emoji: str) -> None:
+        btn = ui.Button(label=t(label_key, self.lang), style=style, emoji=emoji)
+
+        async def _cb(interaction: discord.Interaction):
+            self.stop()  # retire: the modal takes over from here
+            await interaction.response.send_modal(
+                RunoffDurationModal(self.db_id, self.lang, self.tied_ids,
+                                    self.default_hours, ping_mode=mode))
+
+        btn.callback = _cb
+        self.add_item(btn)
+
+    async def _cancel(self, interaction: discord.Interaction):
+        self.stop()
+        await interaction.response.edit_message(
+            embed=discord.Embed(description=t("general.cancelled", self.lang),
+                                color=discord.Color.greyple()),
+            view=None)
+
+
 class RunoffDurationModal(ui.Modal):
     """Ask the organizer for a runoff duration, then re-poll only the tied layers."""
 
-    def __init__(self, db_id: int, lang: str, tied_ids: list[str], default_hours: int):
+    def __init__(self, db_id: int, lang: str, tied_ids: list[str], default_hours: int,
+                 ping_mode: str = "none"):
         super().__init__(title=t("runoff.duration_label", lang)[:45])
         self.db_id = db_id
         self.lang = lang
         self.tied_ids = tied_ids
+        self.ping_mode = ping_mode  # "voters" | "roles" | "none"
         self.duration_input = ui.TextInput(
             label=t("runoff.duration_label", lang)[:45],
             placeholder=DURATION_HINT,
@@ -3278,6 +3408,13 @@ class RunoffDurationModal(ui.Modal):
                 await interaction.response.send_message(
                     t("draw.already_resolved", self.lang), ephemeral=True)
                 return
+            # Capture what we need to re-ping before we clear the poll id below.
+            old_poll_msg_id = event.get("poll_message_id")
+            allowed_role_ids: list[int] = []
+            allowed_user_ids: list[int] = []
+            if self.ping_mode == "roles":  # only this branch pings the allow-list
+                allowed_role_ids = list(event.get("allowed_role_ids") or [])
+                allowed_user_ids = [int(u) for u in (event.get("allowed_user_ids") or [])]
             event["voting_duration_hours"] = hours
             event["selected_for_vote"] = list(self.tied_ids)
             # Drop the finalised poll id so a mid-runoff failure can't leave the
@@ -3287,10 +3424,23 @@ class RunoffDurationModal(ui.Modal):
             event.pop("draw_tied_ids", None)
             db.save_event(record["db_id"], event)
 
+        # Ack right away: the voter fetch below is network I/O that can blow the
+        # 3s interaction window. Everything that can fail (fetch + poll start)
+        # runs under the try so any error rolls the event back to draw_pending.
         await interaction.response.send_message(
             t("runoff.started", self.lang, hours=hours), ephemeral=True)
         try:
-            await _start_poll(interaction, self.db_id, list(self.tied_ids), reuse_thread=True)
+            ping_user_ids: list[int] = []
+            ping_role_ids: list[int] = []
+            if self.ping_mode == "voters" and old_poll_msg_id:
+                ping_user_ids = await _fetch_poll_voter_ids(
+                    interaction.channel, event, old_poll_msg_id)
+            elif self.ping_mode == "roles":
+                ping_role_ids = allowed_role_ids
+                ping_user_ids = allowed_user_ids
+            await _start_poll(interaction, self.db_id, list(self.tied_ids),
+                              reuse_thread=True,
+                              ping_user_ids=ping_user_ids, ping_role_ids=ping_role_ids)
         except Exception as e:
             logger.error(f"Runoff poll failed to start for event {self.db_id}: {e}")
             # Roll the event back to the draw so an organizer can retry instead of
@@ -3377,9 +3527,14 @@ async def handle_draw_action(interaction: discord.Interaction, db_id: int, actio
         return
 
     if action == "draw_runoff":
-        await interaction.response.send_modal(
-            RunoffDurationModal(db_id, lang, [s["id"] for s in tied],
-                                event.get("voting_duration_hours", 24)))
+        gated = bool(event.get("allowed_role_ids") or event.get("allowed_user_ids"))
+        view = _bind(RunoffPingChoiceView(
+            db_id, lang, [s["id"] for s in tied],
+            event.get("voting_duration_hours", 24), gated), interaction)
+        await interaction.response.send_message(
+            embed=discord.Embed(description=t("runoff.ping_prompt", lang),
+                                color=discord.Color.blurple()),
+            view=view, ephemeral=True)
         return
 
     if action == "draw_pick":

@@ -468,6 +468,36 @@ def format_layer_poll_option(suggestion: dict) -> str:
     return text
 
 
+def build_ping_messages(role_ids: list, user_ids: list, header: str,
+                        limit: int = 1900) -> list[str]:
+    """Build the mention message(s) for a runoff ping.
+
+    Roles render as ``<@&id>``, users as ``<@id>``. Mentions are split so no
+    message exceeds ``limit`` characters (Discord's hard cap is 2000; the
+    default leaves headroom for the header line). The header is prepended only
+    to the first message. Returns [] when there's nobody to ping.
+    """
+    mentions = [f"<@&{r}>" for r in role_ids] + [f"<@{u}>" for u in user_ids]
+    if not mentions:
+        return []
+    header_len = len(header) + 1  # header + newline, reserved on the first message
+    messages: list[str] = []
+    chunk: list[str] = []
+    size = 0
+    for m in mentions:
+        add = len(m) + (1 if chunk else 0)  # +1 for the joining space
+        budget = limit - (header_len if not messages else 0)  # header on message 0
+        if chunk and size + add > budget:
+            messages.append(" ".join(chunk))
+            chunk, size, add = [], 0, len(m)
+        chunk.append(m)
+        size += add
+    if chunk:
+        messages.append(" ".join(chunk))
+    messages[0] = f"{header}\n{messages[0]}"
+    return messages
+
+
 def suggestion_matches(s1: dict, s2: dict) -> bool:
     """Check if two suggestions represent the exact same layer combination."""
     keys = ("map_name", "gamemode", "layer_version",
@@ -535,6 +565,53 @@ def _embed_total_chars(embed: Embed) -> int:
     for field in embed.fields:
         total += len(field.name or "") + len(field.value or "")
     return total
+
+
+def build_winner_copy_text(event: dict, lang: str = "en") -> Optional[str]:
+    """Plain-text (copy-friendly) version of the completed-embed winner block.
+
+    Same content and fallbacks as the winner section in build_event_embed,
+    but as message markdown so Discord's "Copy Text" reproduces it 1:1 when
+    pasted elsewhere. Returns None when the event has no winner.
+    """
+    winner = event.get("winning_layer")
+    if not winner:
+        return None
+
+    map_name = winner.get("map_name", "?")
+    gamemode = winner.get("gamemode", "?")
+    version = winner.get("layer_version", "")
+    mode_str = f"{gamemode} {version}".strip() if version else gamemode
+    t1 = winner.get("team1_faction_name") or winner.get("team1_faction", "?")
+    t2 = winner.get("team2_faction_name") or winner.get("team2_faction", "?")
+    t1u = winner.get("team1_unit", "?")
+    t2u = winner.get("team2_unit", "?")
+
+    header = f"🗺️ **{map_name}** — {mode_str}"
+    url = build_squadcalc_url(winner)
+    if url:
+        header += f" — [SquadCalc 🗺️]({url})"
+
+    parts = [f"{header}\n⚔️ {t1}/{t1u} vs {t2}/{t2u}"]
+
+    command = event.get("winning_layer_command")
+    if command:
+        # Escaped backticks render as visible ``` so select-copy (and the
+        # code-block copy button, which strips fences) still yields a snippet
+        # that pastes as a real code block elsewhere.
+        parts.append(f"⚙️ {t('embed.admin_command_header', lang)}\n\\`\\`\\`{command}\\`\\`\\`")
+
+    for team_no, name, unit, vehicles in (
+        (1, t1, t1u, winner.get("team1_vehicles")),
+        (2, t2, t2u, winner.get("team2_vehicles")),
+    ):
+        if vehicles:
+            parts.append(
+                f"🚛 Team {team_no} — {name}/{unit} {t('vehicles.label', lang)}\n"
+                + format_vehicle_list(vehicles, lang)
+            )
+
+    return "\n\n".join(parts)
 
 
 def build_event_embed(event: dict, settings: dict, db_id: int,
