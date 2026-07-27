@@ -1063,7 +1063,8 @@ class CompletedPhaseView(ui.View):
     """View attached to a completed event's embed.
 
     Keeps the Join Voting button (points latecomers at the poll thread to read
-    the final results) plus the Admin button, which routes to the standard
+    the final results) and Info (recent winners / vehicle layouts stay readable
+    after the event), plus the Admin button, which routes to the standard
     admin panel so the organizer can edit metadata or delete the event from
     the embed without touching slash commands.
     """
@@ -1080,6 +1081,15 @@ class CompletedPhaseView(ui.View):
         )
         join.callback = lambda i: handle_join_vote(i, db_id)
         self.add_item(join)
+
+        info = ui.Button(
+            label=t("button.info", lang),
+            style=discord.ButtonStyle.secondary,
+            custom_id=f"event_action:info:{db_id}",
+            emoji="ℹ️",
+        )
+        info.callback = lambda i: handle_info(i, db_id)
+        self.add_item(info)
 
         _add_admin_button(self, db_id, lang)
 
