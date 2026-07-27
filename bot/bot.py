@@ -659,13 +659,62 @@ def _resolve_unit_object_key(units_map: dict, default_unit: str,
     return best[0]
 
 
+# Which vehicles actually spawn is a property of the *layer* (its vehicle
+# spawners), but layers.json only carries each unit's full vehicle pool
+# (Units[].vehicles) — it has no per-layer spawner data at all, and neither does
+# any maintained upstream source (the upstream exporter never reads level
+# actors). Result: RHIBs on waterless maps, helis on layers that have no heli
+# pad. Maps that have *no* boat / helicopter spawner on *any* of their layers are
+# listed here so those can at least be dropped from the pool.
+#
+# ponytail: map granularity, not layer. A map listed here never spawns that class
+# anywhere, so this never hides a vehicle that exists somewhere on the map; gaps
+# on a single layer (e.g. an AAS v1 without the heli its RAAS sibling gets) still
+# show through. Derived from the Squad-Wiki map-data pipeline (per-layer spawner
+# sizes, all layers of each map). Upgrade path: per-layer filtering if a
+# maintained source ever exports layer spawners.
+_MAP_ABSENT_SPAWNERS = {
+    "AlBasrah":     frozenset({"BOAT"}),
+    "Anvil":        frozenset({"BOAT"}),
+    "Chora":        frozenset({"BOAT", "HELICOPTER"}),
+    "Fallujah":     frozenset({"BOAT", "HELICOPTER"}),
+    "FoolsRoad":    frozenset({"BOAT", "HELICOPTER"}),
+    "GooseBay":     frozenset({"BOAT"}),
+    "Gorodok":      frozenset({"BOAT"}),
+    "JensensRange": frozenset({"BOAT"}),
+    "Kamdesh":      frozenset({"BOAT"}),
+    "Kohat":        frozenset({"BOAT"}),
+    "Kokan":        frozenset({"HELICOPTER"}),
+    "Lashkar":      frozenset({"BOAT"}),
+    "Logar":        frozenset({"BOAT", "HELICOPTER"}),
+    "Mestia":       frozenset({"BOAT", "HELICOPTER"}),
+    "Mutaha":       frozenset({"BOAT"}),
+    "Narva":        frozenset({"BOAT", "HELICOPTER"}),
+    "Sumari":       frozenset({"BOAT", "HELICOPTER"}),
+    "Tallil":       frozenset({"BOAT"}),
+    "Yehorivka":    frozenset({"BOAT"}),
+}
+
+# SuperMod decorates the base mapId ("Supermod_Fallujah", "GoingDark_Fallujah",
+# "Supermod_Gorodok_HalfMap") — same terrain, so it gets the same rule.
+_MAP_ID_DECOR = re.compile(r"^(?:Supermod_|SU_|GoingDark_)+|_HalfMap$")
+
+
+def _absent_spawners(layer_data: dict) -> frozenset:
+    """Spawner sizes this layer's map never has (empty set when unknown)."""
+    base = _MAP_ID_DECOR.sub("", layer_data.get("map_id") or "")
+    return _MAP_ABSENT_SPAWNERS.get(base, frozenset())
+
+
 def get_team_vehicles(layer_data: dict, faction: str, team: int,
                       unit_type: Optional[str], units_map: dict) -> list:
     """Return the (trimmed) vehicle list for a faction's chosen loadout on a team.
 
-    Returns [] when the layer/faction/units data is missing or the unit has no
-    vehicles. `unit_type` may be the friendly type, None, or "Default" (the
-    no-unit-selection path) — all of which fall back to the default loadout.
+    Vehicles whose spawner size the layer's map never has (see
+    `_MAP_ABSENT_SPAWNERS`) are dropped. Returns [] when the layer/faction/units
+    data is missing or the unit has no vehicles. `unit_type` may be the friendly
+    type, None, or "Default" (the no-unit-selection path) — all of which fall
+    back to the default loadout.
     """
     if not layer_data or not faction or not units_map:
         return []
@@ -679,7 +728,9 @@ def get_team_vehicles(layer_data: dict, faction: str, team: int,
     key = _resolve_unit_object_key(units_map, default_unit, default_type, unit_type)
     if not key:
         return []
-    return units_map.get(key) or []
+    absent = _absent_spawners(layer_data)
+    return [v for v in (units_map.get(key) or [])
+            if v.get("spawnerSize") not in absent]
 
 
 def _attach_winner_vehicles(winner: dict) -> None:
