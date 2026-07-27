@@ -270,6 +270,21 @@ def format_vehicle_list(vehicles: list, lang: str = "en",
                               max_len)
 
 
+def _squadcalc_mode_token(suggestion: dict) -> str:
+    """Gamemode token as SquadCalc spells it in its layer names.
+
+    SquadCalc's layer labels come from the raw layer name ("Kokan_TC_v1" →
+    "TC v1"), which differs from the verbose `gamemode` field for some modes
+    (TerritoryControl → TC). Take the token in front of the version from
+    raw_name; fall back to the gamemode field for legacy rows without one.
+    """
+    version = suggestion.get("layer_version") or ""
+    parts = (suggestion.get("raw_name") or "").split("_")
+    if version in parts[1:]:
+        return parts[parts.index(version) - 1]
+    return suggestion.get("gamemode", "")
+
+
 def build_squadcalc_url(suggestion: dict) -> Optional[str]:
     """Build a SquadCalc URL for the given suggestion, or None if disabled.
 
@@ -290,9 +305,9 @@ def build_squadcalc_url(suggestion: dict) -> Optional[str]:
 
     sc_map = map_name.replace(" ", "").replace("'", "")
 
-    gamemode = suggestion.get("gamemode", "")
     version = suggestion.get("layer_version", "")
-    sc_layer = f"{gamemode}{version}" if version else gamemode
+    sc_mode = _squadcalc_mode_token(suggestion)
+    sc_layer = f"{sc_mode}{version}" if version else sc_mode
 
     params = {"map": sc_map, "layer": sc_layer}
 
