@@ -670,21 +670,13 @@ def delete_voting_history_entry(entry_id: int) -> bool:
 
 
 def get_blocked_suggestions(guild_id: int, channel_id: int, lookback: int) -> list[dict]:
-    """Return all suggestions from the last `lookback` events for blocking.
+    """Return the winning layers of the last `lookback` events for blocking.
 
-    Includes both the full list of suggestions made during each event AND the
-    recorded winning_layer, so that manual history entries that only carry a
-    winner still get blocked.
+    Only winners block a re-suggestion — losing suggestions from past events
+    may be suggested again.
     """
     history = get_recent_history(guild_id, channel_id, limit=lookback)
-    blocked = []
-    for entry in history:
-        for suggestion in entry.get("all_suggestions", []):
-            blocked.append(suggestion)
-        winner = entry.get("winning_layer")
-        if winner:
-            blocked.append(winner)
-    return blocked
+    return [w for entry in history if (w := entry.get("winning_layer"))]
 
 
 # Guild-settings keys that get snapshotted into event["config"] at creation

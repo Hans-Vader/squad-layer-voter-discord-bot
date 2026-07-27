@@ -315,8 +315,8 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "The suggestion phase is not currently open.",
     },
     "suggest.blocked_history": {
-        "de": "Dieser Layer wurde bereits in einem der letzten {count} Events vorgeschlagen.",
-        "en": "This layer was already suggested in one of the last {count} events.",
+        "de": "Dieser Layer hat bereits in einem der letzten {count} Events gewonnen.",
+        "en": "This layer already won one of the last {count} events.",
     },
     "suggest.no_role": {
         "de": "Du hast nicht die erforderliche Rolle zum Vorschlagen.",

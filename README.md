@@ -127,7 +127,7 @@ python bot.py
 | Blacklisted Units | — | Unit types excluded from suggestions |
 | Max Suggestions/User | 2 | 1-10 |
 | Max Total Suggestions | 25 | 1-25 (hard cap due to Discord dropdown limit) |
-| History Lookback | 3 | Block layers from last N events |
+| History Lookback | 3 | Block winning layers from last N events |
 
 ## Data Structure
 
