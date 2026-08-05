@@ -115,6 +115,17 @@ def test_voting_embed_no_medals_on_fresh_poll():
     assert not any(m in text for m in ("🥇", "🥈", "🥉"))
 
 
+def test_voting_embed_every_bar_line_has_an_icon_prefix():
+    # Ranks 4+ (and zero-vote entries) get 🗳️ so every bar starts at the same
+    # column as the medalled top three.
+    event = _voting_event()
+    embed = utils.build_event_embed(event, {"language": "de"}, 1,
+                                    vote_counts={"a": 8, "b": 12, "c": 0})
+    bars = [ln for ln in _field_text(embed).splitlines() if "`" in ln]
+    assert len(bars) == 3
+    assert all(ln.split(" ", 1)[0] in ("🥇", "🥈", "🥉", "🗳️") for ln in bars)
+
+
 def test_voting_embed_one_field_per_entry():
     # Voting board: one embed field per ballot suggestion → uniform spacing.
     event = _voting_event()  # 3 ballot (a,b,c) + 1 non-ballot (d)

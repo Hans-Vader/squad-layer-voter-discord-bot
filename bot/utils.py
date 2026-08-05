@@ -438,13 +438,15 @@ def _format_vote_result_entry(rank: int, suggestion: dict, count: int,
     """Render one ranked voting entry: a bar line above the layer detail.
 
     The bar line carries a 🥇/🥈/🥉 medal for the top three (only when that
-    option has votes — no medals on a fresh all-zero poll), a block bar sized
+    option has votes — no medals on a fresh all-zero poll) and 🗳️ for every
+    other rank, so all bars start at the same column. Then a block bar sized
     to the option's share of ``total``, the raw count and — when any votes
     exist — that share as a percentage. The detail lines reuse
     ``format_suggestion_entry`` (with ``vote_count=None`` to drop the inline
     🗳️ prefix; ``rank`` becomes the "N." label).
     """
-    prefix = f"{_RANK_MEDALS[rank]} " if rank in _RANK_MEDALS and count > 0 else ""
+    medal = _RANK_MEDALS.get(rank) if count > 0 else None
+    prefix = f"{medal or '🗳️'} "
     line = f"{prefix}`{format_vote_bar(count, total)}` {count}"
     if total > 0:
         # Half-up, and floor a real vote to 1% so a filled bar block is never
