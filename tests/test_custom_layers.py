@@ -382,26 +382,22 @@ def test_source_label_hides_the_internal_custom_name():
     assert utils.source_label("custom:123456789", "en") != "custom:123456789"
 
 
-def test_event_sources_append_the_guilds_custom_source(temp_db):
+def test_event_sources_no_longer_append_the_custom_source(temp_db):
+    # The custom source is an ordinary source now: an event that did not
+    # select it does not get it, even though the guild has custom layers.
     import bot as botmod
     _seed_reference_cache(temp_db)
     cl.save_custom_map(1, "Belaya", ["Belaya_TC_v1"], [], [])
-
-    sources = botmod._resolve_event_sources({"allowed_sources": ["main"]}, {}, 1)
-    assert sources == ["main", "custom:1"]
-
-
-def test_event_sources_skip_a_custom_source_with_no_layers(temp_db):
-    import bot as botmod
-    _seed_reference_cache(temp_db)
-    assert botmod._resolve_event_sources({"allowed_sources": ["main"]}, {}, 1) == ["main"]
+    assert botmod._resolve_event_sources(
+        {"allowed_sources": ["main"]}, {}, 1) == ["main"]
 
 
-def test_event_sources_without_a_guild_id_are_unchanged(temp_db):
+def test_event_sources_include_the_custom_source_when_selected(temp_db):
     import bot as botmod
     _seed_reference_cache(temp_db)
     cl.save_custom_map(1, "Belaya", ["Belaya_TC_v1"], [], [])
-    assert botmod._resolve_event_sources({"allowed_sources": ["main"]}, {}) == ["main"]
+    assert botmod._resolve_event_sources(
+        {"allowed_sources": ["main", "custom:1"]}, {}, 1) == ["main", "custom:1"]
 
 
 def test_units_source_redirects_custom_to_the_reference(temp_db):
@@ -414,11 +410,24 @@ def test_units_source_redirects_custom_to_the_reference(temp_db):
 def test_event_sources_never_resolve_to_an_unfiltered_list(temp_db):
     import bot as botmod
     _seed_reference_cache(temp_db)
+    cl.save_custom_map(1, "Belaya", ["Belaya_TC_v1"], [], [])
     # Event pinned to a source the guild cap no longer allows: the intersection
     # is empty, and an empty list downstream means "no filter" — which would
-    # expose every guild's custom rows.
+    # expose every guild's custom rows. The fallback is everything this guild
+    # has, custom source included.
     assert botmod._resolve_event_sources(
-        {"allowed_sources": ["gone"]}, {"allowed_sources": ["main"]}) == ["main"]
+        {"allowed_sources": ["gone"]}, {"allowed_sources": ["main"]}, 1) == [
+            "main", "custom:1"]
+
+
+def test_offered_sources_include_the_guilds_custom_source(temp_db):
+    import bot as botmod
+    _seed_reference_cache(temp_db)
+    cl.save_custom_map(1, "Belaya", ["Belaya_TC_v1"], [], [])
+    assert botmod._resolve_offered_sources({}, 1) == ["main", "custom:1"]
+    # ...and the guild default still caps it.
+    assert botmod._resolve_offered_sources(
+        {"allowed_sources": ["main"]}, 1) == ["main"]
 
 
 def test_save_only_materializes_the_map_being_saved(temp_db):

@@ -136,7 +136,7 @@ def resolve_reference_source() -> Optional[str]:
     None when no fetched layers are cached at all — custom layers cannot be
     materialized in that state, since there is no faction metadata to copy.
     """
-    cached = db.get_unique_sources()  # already excludes custom:* sources
+    cached = db.get_fetched_sources()
     if SQUADCALC_COMPATIBLE_SOURCE in cached:
         return SQUADCALC_COMPATIBLE_SOURCE
     for name, _url in LAYERS_JSON_SOURCES:

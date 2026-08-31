@@ -1234,7 +1234,7 @@ def _state_event_settings(state: "SuggestState") -> dict:
     return _event_settings(record["event"] if record else {}, settings)
 
 
-def _resolve_event_sources(event: dict, settings: dict, guild_id: int = 0) -> list[str]:
+def _resolve_event_sources(event: dict, settings: dict, guild_id: int) -> list[str]:
     """Return the list of source names a user may pick from for this event.
 
     The event's stored `allowed_sources` (chosen by the admin at creation time)
@@ -1244,25 +1244,17 @@ def _resolve_event_sources(event: dict, settings: dict, guild_id: int = 0) -> li
     immediately for already-active events, instead of being frozen at the
     moment the event was created.
 
-    Falls back to all distinct sources currently in the cache when the event
-    has no explicit selection (legacy events that predate this feature).
+    A guild's own custom source is an ordinary source here: the creation
+    wizard offers it, the cap can switch it off, and an event created before
+    the guild's first custom map simply does not list it until someone edits
+    that event's sources.
 
-    The guild's own custom source is appended last, whenever it actually holds
-    layers. Custom maps are never offered in a source picker, so an event that
-    stored an explicit selection would otherwise never see a map the organizer
-    added afterwards. The `has_layers_for_source` gate keeps guilds without
-    custom maps from gaining a pointless source-picker step.
-
-    The custom source is appended after the guild-level cap is applied, so the
-    Allowed Layer Sources property can never exclude a guild's own custom
-    maps — a guild's own maps are not a data set to opt out of; Edit Event →
-    Blacklisted Maps is the tool for hiding one. (The guild-default
-    blacklist picker in /config_defaults cannot do this: it is scoped by
-    _resolve_offered_sources, which is built on get_unique_sources() and so
-    never includes a custom source.)
+    Falls back to everything this guild has when the event carries no explicit
+    selection (legacy events), and again when the cap filters that selection
+    down to nothing.
     """
     explicit = event.get("allowed_sources") or []
-    candidate = list(explicit) if explicit else db.get_unique_sources()
+    candidate = list(explicit) if explicit else db.get_guild_sources(guild_id)
 
     guild_allowed = settings.get("allowed_sources") or []
     if guild_allowed:
@@ -1271,16 +1263,9 @@ def _resolve_event_sources(event: dict, settings: dict, guild_id: int = 0) -> li
     # An empty list must never reach the caller: both callers treat "no
     # sources resolved" as state.source = "", which downstream means *no
     # source filter at all* (get_unique_maps(allowed_sources=None)) — i.e.
-    # every guild's custom rows become visible. Fall back to the unfiltered
-    # source list, which is the pre-feature meaning of "no filter" and never
-    # includes a custom source.
+    # every guild's custom rows become visible.
     if not candidate:
-        candidate = db.get_unique_sources()
-
-    if guild_id:
-        custom = db.custom_source(guild_id)
-        if custom not in candidate and db.has_layers_for_source(custom):
-            candidate.append(custom)
+        candidate = db.get_guild_sources(guild_id)
 
     return candidate
 
@@ -4793,7 +4778,7 @@ class GuildEditTarget(EditTarget):
         return f"{t('config_defaults.dm_intro', lang)}\n{t('edit.select_property', lang)}"
 
     def scope_sources(self, obj, guild_id):
-        return _resolve_offered_sources(obj)
+        return _resolve_offered_sources(obj, guild_id)
 
 
 _EVENT_TARGET = EventEditTarget()
@@ -6134,7 +6119,7 @@ async def cmd_create_event(interaction: discord.Interaction):
 
     # Resolve which sources will be offered. Same logic as before — the
     # universe of cache sources, intersected with the guild's allowed list.
-    offered = _resolve_offered_sources(settings)
+    offered = _resolve_offered_sources(settings, interaction.guild_id)
     if not offered:
         await interaction.response.send_message(t("cache.empty", lang), ephemeral=True)
         return
@@ -6142,13 +6127,13 @@ async def cmd_create_event(interaction: discord.Interaction):
     await interaction.response.send_modal(EventScheduleModal(settings, lang, offered))
 
 
-def _resolve_offered_sources(settings: dict) -> list[str]:
-    """Sources to expose to event creators: cache ∩ guild default (or all if no default)."""
-    cache_sources = db.get_unique_sources()
+def _resolve_offered_sources(settings: dict, guild_id: int) -> list[str]:
+    """Sources to expose to event creators: this guild's sources ∩ guild default."""
+    guild_sources = db.get_guild_sources(guild_id)
     guild_default = settings.get("allowed_sources") or []
     if guild_default:
-        return [s for s in cache_sources if s in guild_default]
-    return list(cache_sources)
+        return [s for s in guild_sources if s in guild_default]
+    return guild_sources
 
 
 class EventScheduleModal(ui.Modal):
