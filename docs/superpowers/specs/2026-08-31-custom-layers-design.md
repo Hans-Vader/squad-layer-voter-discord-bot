@@ -28,7 +28,7 @@ per-faction unit lists, map size, minimap images, SquadCalc deep links.
 | Question | Decision |
 |----------|----------|
 | Visibility | Per guild. Source name `custom:<guild_id>`. |
-| Source filter | The guild's custom source is **always** appended when resolving an event's sources — a newly added map shows up in a running event immediately. It is never offered in a source picker. |
+| Source filter | The guild's custom source is appended when resolving an event's sources (whenever it has rows) — a newly added map shows up in a running event immediately. It is never offered in a source picker. |
 | Management | Add + delete. Re-adding overwrites. No edit flow. |
 | Gamemode filter | Applies normally. The save confirmation warns which of the entered modes are currently inactive in the guild defaults. |
 | Storage | Own table `custom_layers` as the source of truth, materialized into `layer_cache` after every refresh and after every mutation. |
@@ -69,14 +69,16 @@ New functions in `bot/database.py`:
 - `get_all_custom_maps() -> list[dict]` — adds `guild_id`, used on boot
 - `delete_custom_map(guild_id, map_name) -> bool`
 - `delete_layers(source, map_name) -> int` — drops the materialized rows
-- `get_faction_reference(allowed_sources) -> dict` — `{factionId: {factionName, alliance, defaultUnit}}`, scanned out of `factions_json`; first row per faction wins
+- `get_faction_reference(allowed_sources) -> dict` — `{factionId: {factionName, alliance, defaultUnit}}`, scanned out of `factions_json`; the first entry carrying a non-empty `defaultUnit` wins, since bare string faction entries have none
+- `get_gamemode_samples(allowed_sources) -> list[tuple[str, str]]` — one `(gamemode, raw_name)` pair per distinct gamemode, the input for the token map
+- `has_layers_for_source(source) -> bool`
 
 `custom_source(guild_id) -> f"custom:{guild_id}"` lives in `bot/database.py`
 next to the other source helpers, so both `bot.py` and the DB layer can use it.
 
 ## Materialization
 
-`materialize_custom_layers(guild_id: int | None = None) -> int` in `bot/bot.py`:
+`materialize_custom_layers(guild_id: int | None = None) -> int` in `bot/custom_layers.py`:
 
 1. Read `get_custom_maps(guild_id)` (or `get_all_custom_maps()` when `None`).
 2. Resolve the reference source (below), its `get_faction_reference`, and the
@@ -117,8 +119,8 @@ admin at `/refresh_layers`.
 
 ## Parsing
 
-`parse_custom_layers(text) -> (map_token, layers)` in `bot/bot.py`, pure and
-directly testable.
+`parse_custom_layers(text) -> (map_token, layers)` in `bot/custom_layers.py`, pure
+and directly testable.
 
 1. Split on newlines; strip whitespace and a leading `- `, `* ` or `• `; drop
    empty lines; dedupe preserving order.
@@ -150,7 +152,7 @@ organizer adds it to `allowed_gamemodes`.
 
 ## Faction construction
 
-`_build_custom_factions(faction_ids, unit_types, reference) -> list[dict]`:
+`build_custom_factions(faction_ids, unit_types, reference, all_units) -> list[dict]`:
 
 - `faction_ids` empty → every key of `reference`; `unit_types` empty → every
   type from `db.get_unique_unit_types([reference_source])`
@@ -165,6 +167,17 @@ The borrowed `defaultUnit` (e.g. `USA_LO_CombinedArms`) is what makes vehicle
 info work: `_resolve_unit_object_key` substitutes the type token into that
 object name and looks it up in the units map. It never filters on source or
 faction id.
+
+## Module layout
+
+`bot/bot.py` is already ~6900 lines, so everything that does not need Discord
+goes into a new `bot/custom_layers.py`: parsing, the token map, the reference
+source, faction construction, materialization, and the save/delete entry
+points. It imports `database`, `config` and `utils` only. `bot.py` keeps the
+views, the modal and the routing, and calls into the module.
+
+That split is also what makes the bulk of this feature testable without a
+Discord client.
 
 ## UI
 
@@ -240,10 +253,22 @@ gamemode is missing from the guild's `allowed_gamemodes` —
 | Place | Change |
 |-------|--------|
 | `db.get_unique_sources()` | add `WHERE source NOT LIKE 'custom:%'` — keeps custom sources out of the creation wizard's picker, the Edit Event dialog, `_resolve_offered_sources`, and the legacy fallback in `_resolve_event_sources` (4 call sites, all want the exclusion) |
-| `_resolve_event_sources(event, settings)` | gains `guild_id` and always appends `custom_source(guild_id)` (3 call sites: `bot.py:1289`, `bot.py:4409`, `bot.py:6382`) |
+| `_resolve_event_sources(event, settings)` | gains `guild_id` and appends `custom_source(guild_id)` **when that source actually has cached rows** (3 call sites: `bot.py:1289`, `bot.py:4409`, `bot.py:6382`) |
 | `db.get_source_units(source)` | the 3 call sites (`bot.py:701`, `bot.py:1869`, `bot.py:2216`) resolve `custom:*` to the reference source first, via a small `_units_source(source)` helper |
+| `utils.source_label(source, lang)` | new — renders a custom source as a localized "Custom" instead of `custom:123456789`. Used at the suggest-flow source picker (`bot.py:1292`), the source line in the suggest embed (`bot.py:1381`) and the `/history_add` picker (`bot.py:6384`) |
 | `utils.build_squadcalc_url` | unchanged — already returns `None` for non-`main` sources, so custom layers get the fallback map icon |
 | `utils._event_uses_supermod` | unchanged — a custom source is never the supermod source |
+
+Two consequences worth stating outright:
+
+- The custom source is appended **conditionally**, gated on
+  `db.has_layers_for_source(custom_source(guild_id))`. Appending it
+  unconditionally would push every guild past the `if len(sources) > 1` gate in
+  the suggest flow and in `/history_add`, adding a source-picker step to
+  servers that have no custom maps at all.
+- Once a guild *does* have custom maps, that extra picker step is expected: the
+  user chooses between the fetched source and their own maps, exactly as a
+  guild with supermod enabled already does today.
 
 ## Error handling
 
@@ -296,7 +321,7 @@ New flat keys in `bot/i18n.py`, de and en: `admin.custom_maps`,
 `custom_map.factions_placeholder`, `custom_map.units_placeholder`,
 `custom_map.save`, `custom_map.saved`, `custom_map.replaced`,
 `custom_map.deleted`, `custom_map.gamemode_warning`, `custom_map.truncated`,
-`custom_map.no_reference_data`, `custom_map.err_empty`,
+`custom_map.no_reference_data`, `source.custom`, `custom_map.err_empty`,
 `custom_map.err_invalid_lines`, `custom_map.err_mixed_maps`,
 `custom_map.err_too_many`.
 
