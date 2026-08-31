@@ -922,6 +922,110 @@ _STRINGS: dict[str, dict[str, str]] = {
         "de": "Vorschläge bearbeiten",
         "en": "Manage Suggestions",
     },
+    "admin.custom_maps": {
+        "de": "Eigene Maps",
+        "en": "Custom Maps",
+    },
+    "source.custom": {
+        "de": "Eigene Maps",
+        "en": "Custom Maps",
+    },
+    "custom_map.panel_title": {
+        "de": "Eigene Maps",
+        "en": "Custom Maps",
+    },
+    "custom_map.layer_count": {
+        "de": "{count} Layer",
+        "en": "{count} layers",
+    },
+    "custom_map.none": {
+        "de": "Noch keine eigenen Maps angelegt.",
+        "en": "No custom maps yet.",
+    },
+    "custom_map.add": {
+        "de": "Map hinzufügen",
+        "en": "Add Map",
+    },
+    "custom_map.delete_placeholder": {
+        "de": "Eigene Map löschen …",
+        "en": "Delete custom map…",
+    },
+    "custom_map.modal_title": {
+        "de": "Eigene Map hinzufügen",
+        "en": "Add Custom Map",
+    },
+    "custom_map.field_layers": {
+        "de": "Layer — einer pro Zeile",
+        "en": "Layers — one per line",
+    },
+    "custom_map.field_layers_hint": {
+        "de": "Belaya_RAAS_v1\nBelaya_AAS_v1",
+        "en": "Belaya_RAAS_v1\nBelaya_AAS_v1",
+    },
+    "custom_map.field_display_name": {
+        "de": "Anzeigename (optional)",
+        "en": "Display name (optional)",
+    },
+    "custom_map.details_title": {
+        "de": "Fraktionen & Unit-Typen",
+        "en": "Factions & Unit Types",
+    },
+    "custom_map.details_desc": {
+        "de": "**{map}** — {count} Layer.\nNichts auswählen = alles, was das Hauptspiel kennt.",
+        "en": "**{map}** — {count} layers.\nSelect nothing = everything the main game knows.",
+    },
+    "custom_map.factions_placeholder": {
+        "de": "Fraktionen (leer = alle)",
+        "en": "Factions (empty = all)",
+    },
+    "custom_map.units_placeholder": {
+        "de": "Unit-Typen (leer = alle)",
+        "en": "Unit types (empty = all)",
+    },
+    "custom_map.save": {
+        "de": "Speichern",
+        "en": "Save",
+    },
+    "custom_map.saved": {
+        "de": "✅ **{map}** gespeichert — {count} Layer.",
+        "en": "✅ **{map}** saved — {count} layers.",
+    },
+    "custom_map.replaced": {
+        "de": "✅ **{map}** ersetzt — {count} Layer.",
+        "en": "✅ **{map}** replaced — {count} layers.",
+    },
+    "custom_map.deleted": {
+        "de": "🗑️ **{map}** gelöscht.",
+        "en": "🗑️ **{map}** deleted.",
+    },
+    "custom_map.gamemode_warning": {
+        "de": "⚠️ Diese Modes sind in den Guild-Defaults nicht aktiv und erscheinen daher nicht in Vorschlägen: {modes}",
+        "en": "⚠️ These modes are inactive in the guild defaults, so they will not appear in suggestions: {modes}",
+    },
+    "custom_map.truncated": {
+        "de": "Nur die ersten 25 Einträge werden angeboten (Discord-Limit).",
+        "en": "Only the first 25 entries are offered (Discord limit).",
+    },
+    "custom_map.no_reference_data": {
+        "de": "Der Layer-Cache ist leer — bitte zuerst `/refresh_layers` ausführen.",
+        "en": "The layer cache is empty — run `/refresh_layers` first.",
+    },
+    "custom_map.err_empty": {
+        "de": "Keine gültigen Layer erkannt.",
+        "en": "No valid layers found.",
+    },
+    "custom_map.err_invalid_lines": {
+        "de": "Ungültige Zeilen: {lines}",
+        "en": "Invalid lines: {lines}",
+    },
+    "custom_map.err_mixed_maps": {
+        "de": "Alle Layer müssen zur selben Karte gehören. Gefunden: {maps}",
+        "en": "All layers must belong to the same map. Found: {maps}",
+    },
+    "custom_map.err_too_many": {
+        "de": "Maximal {max} Layer pro Map ({count} eingegeben).",
+        "en": "At most {max} layers per map ({count} given).",
+    },
     "admin.select_for_vote": {
         "de": "Für Abstimmung auswählen",
         "en": "Select for Vote",
