@@ -382,8 +382,7 @@ def test_event_sources_no_longer_append_the_custom_source(temp_db):
     import bot as botmod
     _seed_reference_cache(temp_db)
     cl.save_custom_map(1, "Belaya", ["Belaya_TC_v1"], [], [])
-    assert botmod._resolve_event_sources(
-        {"allowed_sources": ["main"]}, {}, 1) == ["main"]
+    assert botmod._resolve_event_sources({"allowed_sources": ["main"]}, 1) == ["main"]
 
 
 def test_event_sources_include_the_custom_source_when_selected(temp_db):
@@ -391,7 +390,7 @@ def test_event_sources_include_the_custom_source_when_selected(temp_db):
     _seed_reference_cache(temp_db)
     cl.save_custom_map(1, "Belaya", ["Belaya_TC_v1"], [], [])
     assert botmod._resolve_event_sources(
-        {"allowed_sources": ["main", "custom:1"]}, {}, 1) == ["main", "custom:1"]
+        {"allowed_sources": ["main", "custom:1"]}, 1) == ["main", "custom:1"]
 
 
 def test_units_source_redirects_custom_to_the_reference(temp_db):
@@ -401,17 +400,25 @@ def test_units_source_redirects_custom_to_the_reference(temp_db):
     assert botmod._units_source("custom:1") == "main"
 
 
-def test_event_sources_never_resolve_to_an_unfiltered_list(temp_db):
+def test_guild_default_does_not_narrow_a_running_event(temp_db):
+    # The guild defaults seed a new event and then stop mattering, exactly like
+    # every other value in EVENT_CONFIG_KEYS. Editing them must not reach into
+    # an event already in flight.
     import bot as botmod
     _seed_reference_cache(temp_db)
     cl.save_custom_map(1, "Belaya", ["Belaya_TC_v1"], [], [])
-    # Event pinned to a source the guild cap no longer allows: the intersection
-    # is empty, and an empty list downstream means "no filter" — which would
-    # expose every guild's custom rows. The fallback is everything this guild
-    # has, custom source included.
+    temp_db.save_guild_settings(1, {"allowed_sources": ["main"]})
+
     assert botmod._resolve_event_sources(
-        {"allowed_sources": ["gone"]}, {"allowed_sources": ["main"]}, 1) == [
-            "main", "custom:1"]
+        {"allowed_sources": ["main", "custom:1"]}, 1) == ["main", "custom:1"]
+
+
+def test_event_sources_are_empty_only_when_the_guild_has_none(temp_db):
+    # Nothing cached, so there is genuinely nothing to offer. The resolver says
+    # so honestly rather than returning a list that downstream reads as "no
+    # source filter" — the callers turn this into a "cache empty" reply.
+    import bot as botmod
+    assert botmod._resolve_event_sources({}, 1) == []
 
 
 def test_offered_sources_include_the_guilds_custom_source(temp_db):
@@ -485,19 +492,16 @@ def test_allowed_sources_property_offers_the_custom_source(temp_db):
         assert prop["source"](1) == ["main", "custom:1"]
 
 
-def test_event_allowed_sources_choices_honour_the_guild_cap(temp_db):
-    # A guild that capped /config_defaults -> Layer Sources to ["main"] must
-    # not have Custom Maps offered in Edit Event -> Allowed Layer Sources:
-    # ticking an option the cap immediately strips back out is a silent
-    # no-op for the admin. _resolve_offered_sources is the same guild-sources
-    # ∩ guild-default intersection used to build the creation wizard's list.
+def test_event_allowed_sources_choices_are_not_capped(temp_db):
+    # The guild default no longer filters a running event, so capping the
+    # event's own choice list would hide options that work perfectly well.
     import bot as botmod
     _seed_reference_cache(temp_db)
     cl.save_custom_map(1, "Belaya", ["Belaya_TC_v1"], [], [])
     temp_db.save_guild_settings(1, {"allowed_sources": ["main"]})
 
     prop = next(p for p in botmod._EDIT_PROPERTIES if p["key"] == "allowed_sources")
-    assert prop["source"](1) == ["main"]
+    assert prop["source"](1) == ["main", "custom:1"]
 
 
 def test_guild_allowed_sources_choices_are_not_capped_by_themselves(temp_db):

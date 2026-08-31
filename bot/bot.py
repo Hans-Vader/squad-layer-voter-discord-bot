@@ -1234,40 +1234,26 @@ def _state_event_settings(state: "SuggestState") -> dict:
     return _event_settings(record["event"] if record else {}, settings)
 
 
-def _resolve_event_sources(event: dict, settings: dict, guild_id: int) -> list[str]:
+def _resolve_event_sources(event: dict, guild_id: int) -> list[str]:
     """Return the list of source names a user may pick from for this event.
 
-    The event's stored `allowed_sources` (chosen by the admin at creation time)
-    is the starting point. The guild's `allowed_sources` setting is then
-    applied as a live cap — so changes to the Allowed Layer Sources property
-    (Edit Event, or the guild default via /config_defaults) take effect
-    immediately for already-active events, instead of being frozen at the
-    moment the event was created.
+    The event's stored `allowed_sources`, chosen when the event was created,
+    is the whole answer. The guild defaults seed that choice at creation time
+    and then stop mattering — exactly like every other value in
+    `EVENT_CONFIG_KEYS`, which is snapshotted per event. Layer sources used to
+    be the one exception, applied as a live cap across running events, so
+    editing the guild defaults silently narrowed events already in flight.
 
-    A guild's own custom source is an ordinary source here: the creation
-    wizard offers it, the cap can switch it off, and an event created before
-    the guild's first custom map simply does not list it until someone edits
-    that event's sources.
-
-    Falls back to everything this guild has when the event carries no explicit
-    selection (legacy events), and again when the cap filters that selection
-    down to nothing.
+    Falls back to everything this guild has for legacy events that carry no
+    explicit selection. That can still come back empty when the guild has no
+    sources at all, and callers must handle it: an empty list downstream means
+    *no source filter* (`get_unique_maps(allowed_sources=None)`), which would
+    expose every guild's custom rows.
     """
     explicit = event.get("allowed_sources") or []
-    candidate = list(explicit) if explicit else db.get_guild_sources(guild_id)
-
-    guild_allowed = settings.get("allowed_sources") or []
-    if guild_allowed:
-        candidate = [s for s in candidate if s in guild_allowed]
-
-    # An empty list must never reach the caller: both callers treat "no
-    # sources resolved" as state.source = "", which downstream means *no
-    # source filter at all* (get_unique_maps(allowed_sources=None)) — i.e.
-    # every guild's custom rows become visible.
-    if not candidate:
-        candidate = db.get_guild_sources(guild_id)
-
-    return candidate
+    if explicit:
+        return list(explicit)
+    return db.get_guild_sources(guild_id)
 
 
 async def handle_suggest_start(interaction: discord.Interaction, db_id: int):
@@ -1319,7 +1305,7 @@ async def handle_suggest_start(interaction: discord.Interaction, db_id: int):
     state.mirror_match = bool(event.get("mirror_match", False))
     _suggest_sessions[interaction.user.id] = state
 
-    sources = _resolve_event_sources(event, settings, interaction.guild_id)
+    sources = _resolve_event_sources(event, interaction.guild_id)
     if len(sources) > 1:
         # Show source picker first; the map step runs after the user picks one.
         options = [discord.SelectOption(label=source_label(s, lang)[:100], value=s)
@@ -1333,8 +1319,14 @@ async def handle_suggest_start(interaction: discord.Interaction, db_id: int):
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
         return
 
-    # Single source (or none recorded → no filter): skip the picker.
-    state.source = sources[0] if sources else ""
+    if not sources:
+        # Nothing this guild may draw from. Falling through would set
+        # state.source = "", which downstream means *no source filter at all*.
+        await interaction.response.send_message(t("cache.empty", lang), ephemeral=True)
+        return
+
+    # Single source: skip the picker.
+    state.source = sources[0]
     await _suggest_show_map_step(interaction, state, settings, lang, edit=False)
 
 
@@ -4631,7 +4623,7 @@ _EDIT_PROPERTIES: list[dict] = [
     {"key": "max_total_suggestions",     "label_key": "edit.prop.max_total",             "kind": "int",      "target": "config", "min": 1,  "max": 25},
     {"key": "max_self_removals_per_user","label_key": "edit.prop.max_self_removals",     "kind": "int",      "target": "config", "min": 0,  "max": 10},
     {"key": "history_lookback_events",   "label_key": "edit.prop.history_lookback",      "kind": "int",      "target": "config", "min": 0,  "max": 50},
-    {"key": "allowed_sources",           "label_key": "edit.prop.allowed_sources",       "kind": "list",     "target": "event",  "source": lambda gid: _resolve_offered_sources(db.get_guild_settings(gid) or {}, gid)},
+    {"key": "allowed_sources",           "label_key": "edit.prop.allowed_sources",       "kind": "list",     "target": "event",  "source": lambda gid: db.get_guild_sources(gid)},
     {"key": "voting_duration_hours",     "label_key": "edit.prop.voting_duration",       "kind": "vote_duration", "target": "event"},
     {"key": "max_voting_layers",         "label_key": "edit.prop.max_voting_layers",     "kind": "int",      "target": "event",  "min": 1,  "max": 10},
     {"key": "allow_multiple_votes",      "label_key": "edit.prop.allow_multiple_votes",  "kind": "bool",     "target": "event"},
@@ -4755,8 +4747,7 @@ class EventEditTarget(EditTarget):
         return display_name(obj, db_id, lang=lang)
 
     def scope_sources(self, obj, guild_id):
-        settings = db.get_guild_settings(guild_id) or {}
-        return _resolve_event_sources(obj, settings, guild_id)
+        return _resolve_event_sources(obj, guild_id)
 
 
 class GuildEditTarget(EditTarget):
@@ -6735,9 +6726,8 @@ async def cmd_history_add(interaction: discord.Interaction):
     _suggest_sessions[interaction.user.id] = state
 
     # Source picker first, mirroring the suggest flow. There's no event to
-    # resolve sources from, so the candidates are all known sources, capped
-    # by guild-level allowed_sources via _resolve_event_sources({}, ...).
-    sources = _resolve_event_sources({}, settings, interaction.guild_id)
+    # resolve sources from, so the candidates are everything this guild has.
+    sources = _resolve_event_sources({}, interaction.guild_id)
     if len(sources) > 1:
         options = [discord.SelectOption(label=source_label(s, lang)[:100], value=s)
                    for s in sources[:25]]
@@ -6750,10 +6740,15 @@ async def cmd_history_add(interaction: discord.Interaction):
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
         return
 
-    # Single source (or no sources configured): skip the picker. The map
-    # step renders the size-bucketed picker via _build_map_picker_view and
-    # surfaces its own "no maps" error if applicable.
-    state.source = sources[0] if sources else ""
+    if not sources:
+        # Same guard as the suggest flow: an empty list downstream would mean
+        # no source filter, exposing every guild's custom rows.
+        await interaction.response.send_message(t("cache.empty", lang), ephemeral=True)
+        return
+
+    # Single source: skip the picker. The map step renders the size-bucketed
+    # picker via _build_map_picker_view and surfaces its own "no maps" error.
+    state.source = sources[0]
     await _suggest_show_map_step(interaction, state, settings, lang, edit=False)
 
 
