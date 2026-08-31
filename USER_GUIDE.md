@@ -177,9 +177,9 @@ suggestions until `/refresh_layers` runs and picks it back up.
 Custom maps belong to your server, survive `/refresh_layers`, and appear as
 their own **Custom Maps** entry in the suggestion flow's source picker.
 Vehicle layouts are borrowed from the matching main-game factions. Saving
-the same map name again replaces it; the dropdown on the panel deletes one
-(with more than 25 custom maps, that dropdown only offers the first 25 —
-the panel says so under the list).
+the same map name again replaces it; the dropdown on the panel deletes one,
+after asking you to confirm (with more than 25 custom maps, that dropdown
+only offers the first 25 — the panel says so under the list).
 
 > A layer whose game mode is switched off in your defaults will not appear
 > in suggestions — the save confirmation tells you which modes that affects.

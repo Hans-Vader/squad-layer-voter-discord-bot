@@ -73,9 +73,11 @@ class _StubInteraction:
         self.response = _StubResponse()
 
 
-def test_delete_is_scoped_to_the_acting_guild(temp_db):
-    temp_db.upsert_custom_map(1, "Belaya", {"layers": [], "factions": [], "units": []})
-    temp_db.upsert_custom_map(2, "Belaya", {"layers": [], "factions": [], "units": []})
+def test_delete_asks_before_removing_anything(temp_db):
+    # Picking a map in the delete dropdown must not delete it — it puts a
+    # confirmation in front, the way every other destructive admin action does.
+    temp_db.upsert_custom_map(1, "Belaya", {"layers": ["Belaya_TC_v1"],
+                                            "factions": [], "units": []})
 
     view = botmod.CustomMapsView("de", 1, temp_db.get_custom_maps(1))
     view.delete_select = _StubSelect(["Belaya"])
@@ -83,9 +85,29 @@ def test_delete_is_scoped_to_the_acting_guild(temp_db):
 
     asyncio.run(view._delete(interaction))
 
+    assert [m["map_name"] for m in temp_db.get_custom_maps(1)] == ["Belaya"]
+    assert isinstance(interaction.response.edited["view"], botmod.ConfirmActionView)
+
+
+def test_delete_is_scoped_to_the_acting_guild(temp_db):
+    # The confirmation's callback is what actually deletes, and it must key on
+    # the guild that confirmed — never on a value carried in the component.
+    temp_db.upsert_custom_map(1, "Belaya", {"layers": [], "factions": [], "units": []})
+    temp_db.upsert_custom_map(2, "Belaya", {"layers": [], "factions": [], "units": []})
+
+    view = botmod.CustomMapsView("de", 1, temp_db.get_custom_maps(1))
+    view.delete_select = _StubSelect(["Belaya"])
+    asked = _StubInteraction(1)
+    asyncio.run(view._delete(asked))
+
+    # The confirmation view is whatever _delete put on the message; reaching it
+    # that way keeps the production class free of test-only attributes.
+    confirm = _StubInteraction(1)
+    asyncio.run(asked.response.edited["view"]._confirm_callback(confirm, 1))
+
     assert temp_db.get_custom_maps(1) == []
     assert [m["map_name"] for m in temp_db.get_custom_maps(2)] == ["Belaya"]
-    assert interaction.response.edited is not None   # the panel was redrawn
+    assert confirm.response.edited is not None   # the panel was redrawn
 
 
 LAYERS = [
