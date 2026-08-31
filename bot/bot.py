@@ -1251,6 +1251,11 @@ def _resolve_event_sources(event: dict, settings: dict, guild_id: int = 0) -> li
     stored an explicit selection would otherwise never see a map the organizer
     added afterwards. The `has_layers_for_source` gate keeps guilds without
     custom maps from gaining a pointless source-picker step.
+
+    The custom source is appended after the guild-level cap is applied, so
+    /config_layer_sources can never exclude a guild's own custom maps — a
+    guild's own maps are not a data set to opt out of; the map blacklist is
+    the tool for hiding one.
     """
     explicit = event.get("allowed_sources") or []
     candidate = list(explicit) if explicit else db.get_unique_sources()
@@ -5262,7 +5267,7 @@ async def _show_scoped_blacklist_source_picker(
 
 
 def _scoped_blacklist_embed(prop: dict, source: str, lang: str) -> discord.Embed:
-    desc = (f"**{t('suggest.source_label', lang)}:** {source}\n{t('edit.list_prompt', lang)}"
+    desc = (f"**{t('suggest.source_label', lang)}:** {source_label(source, lang)}\n{t('edit.list_prompt', lang)}"
             if source else t("edit.list_prompt", lang))
     return discord.Embed(
         title=t(prop["label_key"], lang),
@@ -5336,7 +5341,8 @@ class ScopedBlacklistSourceView(ui.View):
         self.prop = prop
         self.target = target
 
-        options = [discord.SelectOption(label=s[:100], value=s) for s in sources[:25]]
+        options = [discord.SelectOption(label=source_label(s, lang)[:100], value=s)
+                   for s in sources[:25]]
         select = ui.Select(
             placeholder=t("suggest.select_source", lang),
             options=options, min_values=1, max_values=1,
@@ -6499,7 +6505,7 @@ class HistoryRemoveSourceView(AutoDisableView):
         sources = sorted(by_source.keys())
         options = [
             discord.SelectOption(
-                label=f"{'—' if s == '<unknown>' else s} ({len(by_source[s])})"[:100],
+                label=f"{'—' if s == '<unknown>' else source_label(s, lang)} ({len(by_source[s])})"[:100],
                 value=s,
             )
             for s in sources[:25]
