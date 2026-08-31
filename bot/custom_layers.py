@@ -45,14 +45,15 @@ def split_layer_lines(text: str) -> list[str]:
     """Paste box → deduped raw names, order preserved.
 
     Accepts the bulleted and the bare form equally; any number of blank lines
-    and any surrounding whitespace is ignored.
+    and any surrounding whitespace is ignored. Deduplication is case-insensitive;
+    first spelling of each unique layer is preserved.
     """
-    seen: dict[str, None] = {}
+    seen: dict[str, str] = {}  # lowercased name → first spelling seen
     for line in (text or "").splitlines():
         name = _BULLET_RE.sub("", line.strip()).strip()
         if name:
-            seen.setdefault(name, None)
-    return list(seen)
+            seen.setdefault(name.lower(), name)
+    return list(seen.values())
 
 
 def split_raw_name(raw_name: str) -> tuple[str, str, Optional[str]]:
@@ -86,6 +87,14 @@ def parse_custom_layers(text: str) -> tuple[str, list[dict]]:
         raise CustomLayerError("custom_map.err_empty")
 
     invalid = [n for n in names if not _LAYER_RE.match(n)]
+
+    # Reject layers with no gamemode token (e.g., "Belaya_v1")
+    for n in names:
+        if n not in invalid:  # only check if not already invalid from regex
+            _, mode_token, _ = split_raw_name(n)
+            if not mode_token:
+                invalid.append(n)
+
     if invalid:
         raise CustomLayerError("custom_map.err_invalid_lines",
                                lines=", ".join(invalid[:10]))

@@ -179,3 +179,17 @@ def test_normalize_map_name_falls_back_and_truncates():
     assert cl.normalize_map_name("  Belaya Downs ", "Belaya") == "Belaya Downs"
     assert cl.normalize_map_name("", "Belaya") == "Belaya"
     assert len(cl.normalize_map_name("x" * 200, "Belaya")) == cl.MAX_MAP_NAME_LENGTH
+
+
+def test_case_variant_duplicates_collapse():
+    map_name, layers = cl.parse_custom_layers(
+        "Belaya_TC_v1\nbelaya_tc_v1\nBELAYA_TC_V1")
+    assert map_name == "Belaya"
+    assert [l["raw_name"] for l in layers] == ["Belaya_TC_v1"]  # first spelling wins
+
+
+def test_rejects_a_layer_with_no_gamemode_token():
+    with pytest.raises(cl.CustomLayerError) as exc:
+        cl.parse_custom_layers("Belaya_v1")
+    assert exc.value.key == "custom_map.err_invalid_lines"
+    assert "Belaya_v1" in exc.value.params["lines"]
