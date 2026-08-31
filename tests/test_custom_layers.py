@@ -485,6 +485,34 @@ def test_allowed_sources_property_offers_the_custom_source(temp_db):
         assert prop["source"](1) == ["main", "custom:1"]
 
 
+def test_event_allowed_sources_choices_honour_the_guild_cap(temp_db):
+    # A guild that capped /config_defaults -> Layer Sources to ["main"] must
+    # not have Custom Maps offered in Edit Event -> Allowed Layer Sources:
+    # ticking an option the cap immediately strips back out is a silent
+    # no-op for the admin. _resolve_offered_sources is the same guild-sources
+    # ∩ guild-default intersection used to build the creation wizard's list.
+    import bot as botmod
+    _seed_reference_cache(temp_db)
+    cl.save_custom_map(1, "Belaya", ["Belaya_TC_v1"], [], [])
+    temp_db.save_guild_settings(1, {"allowed_sources": ["main"]})
+
+    prop = next(p for p in botmod._EDIT_PROPERTIES if p["key"] == "allowed_sources")
+    assert prop["source"](1) == ["main"]
+
+
+def test_guild_allowed_sources_choices_are_not_capped_by_themselves(temp_db):
+    # The guild-level allowed_sources entry (/config_defaults) IS the cap, so
+    # its own choice list must stay uncapped -- otherwise a source disabled
+    # there could never be re-enabled again.
+    import bot as botmod
+    _seed_reference_cache(temp_db)
+    cl.save_custom_map(1, "Belaya", ["Belaya_TC_v1"], [], [])
+    temp_db.save_guild_settings(1, {"allowed_sources": ["main"]})
+
+    prop = next(p for p in botmod._GUILD_EDIT_PROPERTIES if p["key"] == "allowed_sources")
+    assert prop["source"](1) == ["main", "custom:1"]
+
+
 def test_colliding_map_name_flags_a_prefix_in_either_direction(temp_db):
     # The blacklist filter matches by case-insensitive prefix across every
     # source, so either direction of prefix means both maps would be hidden.
