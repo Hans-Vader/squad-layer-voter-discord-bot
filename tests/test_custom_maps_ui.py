@@ -6,6 +6,7 @@ import discord
 
 import bot as botmod
 import custom_layers as cl  # noqa: F401  (import guard: the view calls into it)
+from i18n import t
 
 
 def _actions(view):
@@ -124,3 +125,47 @@ def test_modal_carries_two_text_inputs():
     assert len(modal.children) == 2
     assert modal.layers_input.required is True
     assert modal.name_input.required is False
+
+
+def _seed_reference_cache(db):
+    """One main-source layer carrying the faction metadata a custom map borrows."""
+    db.upsert_layer(
+        raw_name="AlBasrah_AAS_v1", source="main", map_name="Al Basrah",
+        map_id="albasrah", gamemode="AAS", layer_version="v1",
+        factions=[{"factionId": "USA", "factionName": "United States Army",
+                   "defaultUnit": "USA_LO_CombinedArms", "alliance": "BLUFOR",
+                   "availableOnTeams": [1, 2],
+                   "unitTypes": [{"type": "CombinedArms", "name": "CombinedArms"}]}],
+        team1_alliances=[], team2_alliances=[], map_size_km=None,
+    )
+
+
+def test_save_does_not_claim_success_when_nothing_was_written(temp_db):
+    # No fetched source cached, so materialization has no faction metadata to
+    # borrow and writes nothing. The view must say so instead of "saved".
+    view = botmod.CustomMapDetailsView(
+        "en", 1, "Belaya",
+        [{"raw_name": "Belaya_TC_v1", "gamemode_token": "TC", "layer_version": "v1"}],
+        ["USA"], ["CombinedArms"])
+    interaction = _StubInteraction(1)
+
+    asyncio.run(view._save(interaction))
+
+    description = interaction.response.edited["embed"].description
+    assert t("custom_map.no_reference_data", "en") in description
+    assert "saved" not in description.lower()
+
+
+def test_save_reports_success_when_layers_were_written(temp_db):
+    _seed_reference_cache(temp_db)
+    view = botmod.CustomMapDetailsView(
+        "en", 1, "Belaya",
+        [{"raw_name": "Belaya_TC_v1", "gamemode_token": "TC", "layer_version": "v1"}],
+        ["USA"], ["CombinedArms"])
+    interaction = _StubInteraction(1)
+
+    asyncio.run(view._save(interaction))
+
+    description = interaction.response.edited["embed"].description
+    assert t("custom_map.saved", "en", map="Belaya", count=1) in description
+    assert [m["map_name"] for m in temp_db.get_custom_maps(1)] == ["Belaya"]
