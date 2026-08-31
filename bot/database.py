@@ -580,8 +580,6 @@ def get_map_sizes(allowed_sources: Optional[list[str]] = None) -> "dict[str, flo
     return {name: size for name, size in rows if size is not None}
 
 
-
-
 def get_fetched_sources() -> list[str]:
     """Sorted source names that came from a layers.json URL.
 

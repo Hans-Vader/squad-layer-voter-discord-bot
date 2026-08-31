@@ -52,8 +52,6 @@ def test_delete_custom_map_reports_whether_it_existed(temp_db):
     assert temp_db.delete_custom_map(1, "Belaya") is False
 
 
-
-
 def test_has_layers_for_source(temp_db):
     _seed_layer(temp_db, "Belaya_TC_v1", "custom:1", "Belaya", "TerritoryControl")
     assert temp_db.has_layers_for_source("custom:1") is True
