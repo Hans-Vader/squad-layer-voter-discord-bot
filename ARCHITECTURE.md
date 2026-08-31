@@ -230,7 +230,7 @@ Manual run (per README): `cd bot` then `python bot.py`. The SQLite path defaults
 | Suggestion dropdown chain | `bot/bot.py:872-1540` |
 | Poll creation / winner resolution / RCON command | `bot/bot.py:2338-2561`, `bot.py:683` (`build_admin_change_layer`) |
 | Layer fetch / parse / cache | `bot/bot.py:231-446`, `config.py:62-146` |
-| Custom (admin-defined) maps | `bot/custom_layers.py`, views in `bot/bot.py:2430-2672` |
+| Custom (admin-defined) maps | `bot/custom_layers.py`, views in `bot/bot.py:2443-2687` |
 | SquadCalc links, embed/poll formatting | `bot/utils.py` |
 | SQLite schema + JSON-blob persistence | `bot/database.py` |
 | Env config | `bot/config.py` |
