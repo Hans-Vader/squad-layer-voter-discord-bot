@@ -118,6 +118,11 @@ def _build_layers_json_sources(urls: list[str]) -> list[tuple[str, str]]:
 LAYERS_JSON_URLS = _parse_layers_json_urls(os.getenv("LAYERS_JSON_URL", ""))
 LAYERS_JSON_SOURCES = _build_layers_json_sources(LAYERS_JSON_URLS)
 
+# Per-guild, admin-defined layers live in layer_cache under this source prefix
+# (e.g. "custom:123456789"). Defined here so database.py and utils.py can both
+# reach it without importing one another.
+CUSTOM_SOURCE_PREFIX = "custom:"
+
 # ── Layer exclusions — never cache these maps / gamemodes ────────────────
 # mapId substrings: any layer whose mapId contains one of these is excluded.
 EXCLUDED_MAP_ID_SUBSTRINGS: tuple[str, ...] = (

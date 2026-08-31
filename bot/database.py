@@ -7,6 +7,7 @@ Uses SQLite with tables:
 - layer_cache: cached layer data from layers.json
 - events: per-channel suggestion/voting cycles
 - voting_history: past winning layers
+- custom_layers: admin-defined maps, materialized into layer_cache
 
 Every public function accepts a guild_id to ensure full multi-guild isolation.
 """
@@ -17,6 +18,8 @@ import sqlite3
 import logging
 from datetime import datetime
 from typing import Optional
+
+from config import CUSTOM_SOURCE_PREFIX
 
 logger = logging.getLogger("layer_vote.db")
 
@@ -147,6 +150,19 @@ def init_db():
             source     TEXT PRIMARY KEY,
             units_json TEXT NOT NULL DEFAULT '{}',
             cached_at  TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        -- Admin-defined maps, one row per (guild, map). `payload` holds only
+        -- what the organizer entered: {"layers": [rawName, ...],
+        -- "factions": [...], "units": [...]}. Everything derivable is
+        -- re-resolved when the rows are materialized into layer_cache, so this
+        -- table survives a /refresh_layers that wipes the cache.
+        CREATE TABLE IF NOT EXISTS custom_layers (
+            guild_id   INTEGER NOT NULL,
+            map_name   TEXT    NOT NULL,
+            payload    TEXT    NOT NULL DEFAULT '{}',
+            created_at TEXT    NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (guild_id, map_name)
         );
 
         CREATE TABLE IF NOT EXISTS events (
@@ -284,6 +300,11 @@ def _source_filter(allowed_sources: Optional[list[str]], prefix: str = " AND ") 
         return "", []
     placeholders = ",".join("?" * len(allowed_sources))
     return f"{prefix}source IN ({placeholders})", list(allowed_sources)
+
+
+def custom_source(guild_id: int) -> str:
+    """Source name a guild's admin-defined layers are cached under."""
+    return f"{CUSTOM_SOURCE_PREFIX}{guild_id}"
 
 
 def upsert_layer(raw_name: str, source: str, map_name: str, map_id: str, gamemode: str,
@@ -455,6 +476,78 @@ def get_unique_gamemodes(allowed_sources: Optional[list[str]] = None) -> list[st
     return [r[0] for r in rows]
 
 
+def get_gamemode_samples(allowed_sources: Optional[list[str]] = None) -> list[tuple[str, str]]:
+    """One (gamemode, raw_name) pair per distinct gamemode.
+
+    Custom layers are typed as raw names ("Belaya_TC_v1") but the cache stores
+    the verbose gamemode ("TerritoryControl"). One sample per mode is all it
+    takes to derive that mapping from the data instead of hardcoding it.
+    """
+    where, params = _source_filter(allowed_sources, prefix=" WHERE ")
+    sql = f"SELECT gamemode, MIN(raw_name) FROM layer_cache{where} GROUP BY gamemode"
+    conn = _get_conn()
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+    return [(gm, rn) for gm, rn in rows if gm and rn]
+
+
+def get_faction_reference(allowed_sources: Optional[list[str]] = None) -> dict:
+    """{factionId: {factionName, alliance, defaultUnit}} from cached layers.
+
+    Custom layers borrow these values so their factions carry the same names,
+    alliances and — crucially — the same `defaultUnit` object names, which is
+    what lets _resolve_unit_object_key find their vehicle loadouts. Entries
+    without a defaultUnit (bare string factions) are kept only until one with a
+    defaultUnit shows up.
+    """
+    where, params = _source_filter(allowed_sources, prefix=" WHERE ")
+    sql = f"SELECT factions_json FROM layer_cache{where}"
+    conn = _get_conn()
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+
+    ref: dict = {}
+    for (fj,) in rows:
+        for fac in json.loads(fj):
+            if not isinstance(fac, dict):
+                continue
+            fac_id = fac.get("factionId", "")
+            if not fac_id:
+                continue
+            existing = ref.get(fac_id)
+            if existing and existing.get("defaultUnit"):
+                continue
+            ref[fac_id] = {
+                "factionName": fac.get("factionName", "") or "",
+                "alliance": fac.get("alliance", "") or "",
+                "defaultUnit": fac.get("defaultUnit", "") or "",
+            }
+    return ref
+
+
+def has_layers_for_source(source: str) -> bool:
+    """Whether the cache holds at least one layer for this source."""
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT 1 FROM layer_cache WHERE source = ? LIMIT 1", (source,)
+    ).fetchone()
+    conn.close()
+    return row is not None
+
+
+def delete_layers(source: str, map_name: str) -> int:
+    """Drop the materialized layer_cache rows of one custom map."""
+    conn = _get_conn()
+    with conn:
+        cur = conn.execute(
+            "DELETE FROM layer_cache WHERE source = ? AND map_name = ?",
+            (source, map_name),
+        )
+    count = cur.rowcount
+    conn.close()
+    return count
+
+
 def get_map_sizes(allowed_sources: Optional[list[str]] = None) -> "dict[str, float]":
     """Return {map_name: max_layer_size_km} from the cache.
 
@@ -472,13 +565,76 @@ def get_map_sizes(allowed_sources: Optional[list[str]] = None) -> "dict[str, flo
 
 
 def get_unique_sources() -> list[str]:
-    """Return sorted list of distinct source names currently in the cache."""
+    """Return sorted list of distinct *fetched* source names in the cache.
+
+    Per-guild custom sources are excluded: they are never offered in a source
+    picker (an admin's own maps aren't a data set you opt into), and they are
+    appended automatically when an event's sources are resolved.
+    """
     conn = _get_conn()
     rows = conn.execute(
-        "SELECT DISTINCT source FROM layer_cache ORDER BY source"
+        "SELECT DISTINCT source FROM layer_cache "
+        "WHERE source NOT LIKE ? ORDER BY source",
+        (f"{CUSTOM_SOURCE_PREFIX}%",),
     ).fetchall()
     conn.close()
     return [r[0] for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Custom (admin-defined) maps
+# ---------------------------------------------------------------------------
+
+def upsert_custom_map(guild_id: int, map_name: str, payload: dict):
+    """Store or replace one guild's custom map definition."""
+    conn = _get_conn()
+    with conn:
+        conn.execute(
+            """INSERT INTO custom_layers (guild_id, map_name, payload)
+               VALUES (?, ?, ?)
+               ON CONFLICT(guild_id, map_name) DO UPDATE SET
+                 payload=excluded.payload""",
+            (guild_id, map_name, _dumps(payload)),
+        )
+    conn.close()
+
+
+def get_custom_maps(guild_id: int) -> list[dict]:
+    """All custom maps of one guild, as {guild_id, map_name, payload}."""
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT map_name, payload FROM custom_layers WHERE guild_id = ? "
+        "ORDER BY map_name",
+        (guild_id,),
+    ).fetchall()
+    conn.close()
+    return [{"guild_id": guild_id, "map_name": name, "payload": _loads(p)}
+            for name, p in rows]
+
+
+def get_all_custom_maps() -> list[dict]:
+    """Every guild's custom maps — used to rebuild the cache after a refresh."""
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT guild_id, map_name, payload FROM custom_layers "
+        "ORDER BY guild_id, map_name"
+    ).fetchall()
+    conn.close()
+    return [{"guild_id": gid, "map_name": name, "payload": _loads(p)}
+            for gid, name, p in rows]
+
+
+def delete_custom_map(guild_id: int, map_name: str) -> bool:
+    """Remove one custom map definition. Returns whether a row was deleted."""
+    conn = _get_conn()
+    with conn:
+        cur = conn.execute(
+            "DELETE FROM custom_layers WHERE guild_id = ? AND map_name = ?",
+            (guild_id, map_name),
+        )
+    deleted = cur.rowcount > 0
+    conn.close()
+    return deleted
 
 
 # ---------------------------------------------------------------------------
