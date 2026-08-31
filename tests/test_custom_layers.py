@@ -409,3 +409,25 @@ def test_units_source_redirects_custom_to_the_reference(temp_db):
     _seed_reference_cache(temp_db)
     assert botmod._units_source("main") == "main"
     assert botmod._units_source("custom:1") == "main"
+
+
+def test_event_sources_never_resolve_to_an_unfiltered_list(temp_db):
+    import bot as botmod
+    _seed_reference_cache(temp_db)
+    # Event pinned to a source the guild cap no longer allows: the intersection
+    # is empty, and an empty list downstream means "no filter" — which would
+    # expose every guild's custom rows.
+    assert botmod._resolve_event_sources(
+        {"allowed_sources": ["gone"]}, {"allowed_sources": ["main"]}) == ["main"]
+
+
+def test_save_only_materializes_the_map_being_saved(temp_db):
+    _seed_reference_cache(temp_db)
+    cl.save_custom_map(1, "Belaya", ["Belaya_TC_v1"], [], [])
+    cl.save_custom_map(1, "Kokan", ["Kokan_AAS_v1"], [], [])
+
+    source = temp_db.custom_source(1)
+    temp_db.delete_layers(source, "Belaya")          # stale cache for the other map
+    assert cl.save_custom_map(1, "Kokan", ["Kokan_AAS_v1"], [], []) == 1
+    # Saving Kokan must not have touched Belaya's rows either way.
+    assert temp_db.count_layers(source, "Belaya") == 0

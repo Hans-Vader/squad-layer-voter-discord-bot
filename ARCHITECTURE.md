@@ -144,7 +144,7 @@ Five tables (plus `source_units`, a small per-source vehicle-data cache alongsid
 
 Key design points:
 
-- **JSON blobs over normalized tables.** Suggestions and votes are **not** separate rows — they live inside `events.event_data`, so they are not SQL-queryable, only loadable/parsable. Custom `_dumps`/`_loads` with a `{"__datetime__": iso}` wrapper round-trip `datetime` objects through the TEXT columns (database.py:29-47); external tooling reading these blobs must understand that wrapper.
+- **JSON blobs over normalized tables.** Suggestions and votes are **not** separate rows — they live inside `events.event_data`, so they are not SQL-queryable, only loadable/parsable. Custom `_dumps`/`_loads` with a `{"__datetime__": iso}` wrapper round-trip `datetime` objects through the TEXT columns (database.py:32-50); external tooling reading these blobs must understand that wrapper.
 - **Soft delete** by mutating `status` to a unique `completed_<id>` / `deleted_<id>` string (rows are preserved; `status` is therefore not a fixed enum).
 - **Guild isolation is enforced in application code, not the schema.** `get_event_by_db_id` is guild-scoped (a deliberate security boundary against cross-guild button clicks); `get_active_event_unsafe` skips the guild filter and is for trusted background tasks only. There are no declared FK constraints despite `foreign_keys=ON`.
 - **Per-event config snapshotting** (`_snapshot_event_config` / `EVENT_CONFIG_KEYS`, around `build_default_event` at database.py:646-723) so editing one event's settings never affects guild defaults or sibling events.

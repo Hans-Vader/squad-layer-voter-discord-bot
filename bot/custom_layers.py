@@ -212,15 +212,31 @@ def build_custom_factions(faction_ids: list[str], unit_types: list[str],
     return out
 
 
-def materialize_custom_layers(guild_id: Optional[int] = None) -> int:
+def materialize_custom_layers(guild_id: Optional[int] = None,
+                               map_name: Optional[str] = None) -> int:
     """Expand the stored custom maps into layer_cache rows. Returns rows written.
 
     Idempotent — upsert_layer keys on (raw_name, source) — so it is safe to run
     after a refresh, on boot and after every save. A no-op when no fetched
     source is cached, since there would be no faction metadata to borrow.
+
+    `map_name` narrows the work to that one map of `guild_id` (pass both
+    together). This exists because a save answers a Discord interaction and
+    cannot afford to rewrite every map of the guild: measured against a
+    1260-row cache, materializing one map takes ~0.7s but a 25-map guild takes
+    ~13s — well past the ~3s window before Discord invalidates the
+    interaction token. `guild_id` alone still materializes every map of that
+    guild, and no arguments still materializes every guild — both existing
+    callers (on_ready, /refresh_layers) legitimately want that.
     """
-    entries = (db.get_custom_maps(guild_id) if guild_id is not None
-               else db.get_all_custom_maps())
+    if map_name is not None:
+        if guild_id is None:
+            raise ValueError("map_name requires guild_id")
+        entries = [e for e in db.get_custom_maps(guild_id)
+                   if e["map_name"] == map_name]
+    else:
+        entries = (db.get_custom_maps(guild_id) if guild_id is not None
+                   else db.get_all_custom_maps())
     if not entries:
         return 0
 
@@ -272,10 +288,11 @@ def save_custom_map(guild_id: int, map_name: str, raw_names: list[str],
         "units": list(unit_types),
     })
     db.delete_layers(db.custom_source(guild_id), map_name)
-    # Materialization covers every map of the guild, so its own row count would
-    # over-report this one — and it silently writes nothing when no reference
-    # source is cached. Report what actually reached the cache.
-    materialize_custom_layers(guild_id)
+    # Narrowed to this one map — a save answers a Discord interaction and
+    # cannot afford to rewrite every map of the guild (see
+    # materialize_custom_layers). It also silently writes nothing when no
+    # reference source is cached, so report what actually reached the cache.
+    materialize_custom_layers(guild_id, map_name)
     return db.count_layers(db.custom_source(guild_id), map_name)
 
 

@@ -1239,7 +1239,8 @@ def _resolve_event_sources(event: dict, settings: dict, guild_id: int = 0) -> li
 
     The event's stored `allowed_sources` (chosen by the admin at creation time)
     is the starting point. The guild's `allowed_sources` setting is then
-    applied as a live cap — so changes to /config_layer_sources take effect
+    applied as a live cap — so changes to the Allowed Layer Sources property
+    (Edit Event, or the guild default via /config_defaults) take effect
     immediately for already-active events, instead of being frozen at the
     moment the event was created.
 
@@ -1252,10 +1253,13 @@ def _resolve_event_sources(event: dict, settings: dict, guild_id: int = 0) -> li
     added afterwards. The `has_layers_for_source` gate keeps guilds without
     custom maps from gaining a pointless source-picker step.
 
-    The custom source is appended after the guild-level cap is applied, so
-    /config_layer_sources can never exclude a guild's own custom maps — a
-    guild's own maps are not a data set to opt out of; the map blacklist is
-    the tool for hiding one.
+    The custom source is appended after the guild-level cap is applied, so the
+    Allowed Layer Sources property can never exclude a guild's own custom
+    maps — a guild's own maps are not a data set to opt out of; Edit Event →
+    Blacklisted Maps is the tool for hiding one. (The guild-default
+    blacklist picker in /config_defaults cannot do this: it is scoped by
+    _resolve_offered_sources, which is built on get_unique_sources() and so
+    never includes a custom source.)
     """
     explicit = event.get("allowed_sources") or []
     candidate = list(explicit) if explicit else db.get_unique_sources()
@@ -1263,6 +1267,15 @@ def _resolve_event_sources(event: dict, settings: dict, guild_id: int = 0) -> li
     guild_allowed = settings.get("allowed_sources") or []
     if guild_allowed:
         candidate = [s for s in candidate if s in guild_allowed]
+
+    # An empty list must never reach the caller: both callers treat "no
+    # sources resolved" as state.source = "", which downstream means *no
+    # source filter at all* (get_unique_maps(allowed_sources=None)) — i.e.
+    # every guild's custom rows become visible. Fall back to the unfiltered
+    # source list, which is the pre-feature meaning of "no filter" and never
+    # includes a custom source.
+    if not candidate:
+        candidate = db.get_unique_sources()
 
     if guild_id:
         custom = db.custom_source(guild_id)
@@ -2467,6 +2480,8 @@ class CustomMapsView(AutoDisableView):
 
     async def _add(self, interaction: discord.Interaction):
         # The modal replaces nothing yet — its submit handler edits this message.
+        self.stop()  # retire: the wizard's own views take over from here, and
+        # this view's 120s timeout must not fire on top of them later
         await interaction.response.send_modal(CustomMapModal(self.lang, self.db_id))
 
     async def _delete(self, interaction: discord.Interaction):

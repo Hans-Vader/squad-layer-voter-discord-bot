@@ -187,8 +187,10 @@ the panel says so under the list).
 Custom maps can't be hidden with the **Allowed Layer Sources** setting
 (Edit Event, or the guild-wide default via `/config_defaults`) — once a
 custom map has layers, its source is always available to suggesters. To
-hide one instead, delete it here, or add its map name to **Blacklisted
-Maps**.
+hide one instead, delete it here, or add its map name to **Edit Event →
+Blacklisted Maps** for that event. The guild-wide **Blacklisted Maps**
+default in `/config_defaults` can't be used for this — its map picker is
+scoped to the main layer sources and never lists a custom map.
 
 ### Viewing Settings
 
