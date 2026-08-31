@@ -2520,6 +2520,158 @@ async def admin_custom_maps(interaction: discord.Interaction, db_id: int):
     await _render_custom_maps(interaction, db_id, lang)
 
 
+class CustomMapModal(ui.Modal):
+    """Step 1 of adding a custom map: the raw layer names.
+
+    Discord modals take text inputs only, so the faction and unit pickers can't
+    live here — same reason EventScheduleModal hands off to a follow-up view.
+    """
+
+    def __init__(self, lang: str, db_id: int):
+        super().__init__(title=t("custom_map.modal_title", lang)[:45])
+        self.lang = lang
+        self.db_id = db_id
+
+        self.layers_input = ui.TextInput(
+            label=t("custom_map.field_layers", lang)[:45],
+            style=discord.TextStyle.paragraph,
+            placeholder=t("custom_map.field_layers_hint", lang)[:100],
+            required=True,
+            max_length=2000,
+        )
+        self.add_item(self.layers_input)
+
+        self.name_input = ui.TextInput(
+            label=t("custom_map.field_display_name", lang)[:45],
+            required=False,
+            max_length=custom_layers.MAX_MAP_NAME_LENGTH,
+        )
+        self.add_item(self.name_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            map_token, layers = custom_layers.parse_custom_layers(
+                str(self.layers_input.value))
+        except custom_layers.CustomLayerError as e:
+            await interaction.response.send_message(
+                embed=discord.Embed(description=t(e.key, self.lang, **e.params),
+                                    color=discord.Color.red()),
+                ephemeral=True)
+            return
+
+        # A select with zero options is rejected by Discord, so an unusable
+        # reference source is refused here rather than at render time.
+        source = custom_layers.resolve_reference_source()
+        faction_ids = sorted(db.get_faction_reference([source])) if source else []
+        unit_types = db.get_unique_unit_types([source]) if source else []
+        if not faction_ids or not unit_types:
+            await interaction.response.send_message(
+                embed=discord.Embed(
+                    description=t("custom_map.no_reference_data", self.lang),
+                    color=discord.Color.red()),
+                ephemeral=True)
+            return
+
+        map_name = custom_layers.normalize_map_name(
+            str(self.name_input.value), map_token)
+
+        view = CustomMapDetailsView(self.lang, self.db_id, map_name, layers,
+                                    faction_ids, unit_types)
+        embed = discord.Embed(
+            title=t("custom_map.details_title", self.lang),
+            description=t("custom_map.details_desc", self.lang,
+                          map=map_name, count=len(layers)),
+            color=discord.Color.dark_red(),
+        )
+        if view.truncated:
+            embed.description += "\n" + t("custom_map.truncated", self.lang)
+
+        # The modal was opened from a component on the sub-panel message, so
+        # edit_message replaces that message with this screen.
+        await interaction.response.edit_message(embed=embed,
+                                                view=_bind(view, interaction))
+
+
+class CustomMapDetailsView(AutoDisableView):
+    """Steps 2 and 3: which factions and unit types the map supports.
+
+    Both selects fit on one message (two of the five action rows), so the two
+    steps share a screen rather than chaining two round trips. Selecting
+    nothing means "everything the main game knows" — resolved at
+    materialization, not frozen here.
+    """
+
+    def __init__(self, lang: str, db_id: int, map_name: str, layers: list[dict],
+                 faction_ids: list[str], unit_types: list[str]):
+        super().__init__(timeout=300)
+        self.lang = lang
+        self.db_id = db_id
+        self.map_name = map_name
+        self.layers = layers
+        self.selected_factions: list[str] = []
+        self.selected_units: list[str] = []
+        self.truncated = len(faction_ids) > 25 or len(unit_types) > 25
+
+        self.faction_select = ui.Select(
+            placeholder=t("custom_map.factions_placeholder", lang),
+            options=[discord.SelectOption(label=f[:100], value=f)
+                     for f in faction_ids[:25]],
+            min_values=0, max_values=min(len(faction_ids), 25) or 1, row=0)
+        self.faction_select.callback = self._factions_changed
+        self.add_item(self.faction_select)
+
+        self.unit_select = ui.Select(
+            placeholder=t("custom_map.units_placeholder", lang),
+            options=[discord.SelectOption(label=u[:100], value=u)
+                     for u in unit_types[:25]],
+            min_values=0, max_values=min(len(unit_types), 25) or 1, row=1)
+        self.unit_select.callback = self._units_changed
+        self.add_item(self.unit_select)
+
+        save = ui.Button(label=t("custom_map.save", lang),
+                         style=discord.ButtonStyle.success, emoji="✅", row=2)
+        save.callback = self._save
+        self.add_item(save)
+
+    async def _factions_changed(self, interaction: discord.Interaction):
+        self.selected_factions = list(self.faction_select.values)
+        await interaction.response.defer()
+
+    async def _units_changed(self, interaction: discord.Interaction):
+        self.selected_units = list(self.unit_select.values)
+        await interaction.response.defer()
+
+    async def _save(self, interaction: discord.Interaction):
+        settings = db.get_guild_settings(interaction.guild_id) or {}
+        existed = any(m["map_name"] == self.map_name
+                      for m in db.get_custom_maps(interaction.guild_id))
+
+        written = custom_layers.save_custom_map(
+            interaction.guild_id, self.map_name,
+            [layer["raw_name"] for layer in self.layers],
+            self.selected_factions, self.selected_units)
+
+        if written == 0:
+            # Nothing reached the cache — materialization needs a fetched source
+            # to borrow faction data from. The definition is stored and a later
+            # /refresh_layers will pick it up, but do not claim success now.
+            notice = t("custom_map.no_reference_data", self.lang)
+        else:
+            key = "custom_map.replaced" if existed else "custom_map.saved"
+            notice = t(key, self.lang, map=self.map_name, count=written)
+
+            source = custom_layers.resolve_reference_source()
+            inactive = custom_layers.inactive_gamemodes(
+                self.layers, settings.get("allowed_gamemodes") or [],
+                custom_layers.build_gamemode_token_map(source) if source else {})
+            if inactive:
+                notice += "\n" + t("custom_map.gamemode_warning", self.lang,
+                                   modes=", ".join(inactive))
+
+        self.stop()  # retire this view; _render_custom_maps attaches a fresh one
+        await _render_custom_maps(interaction, self.db_id, self.lang, notice=notice)
+
+
 class AdminButton(ui.Button):
     def __init__(self, action: str, label: str, style: discord.ButtonStyle, emoji: str):
         # Custom_ids are scoped to the action only; the per-event db_id lives

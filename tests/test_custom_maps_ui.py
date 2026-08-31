@@ -85,3 +85,42 @@ def test_delete_is_scoped_to_the_acting_guild(temp_db):
     assert temp_db.get_custom_maps(1) == []
     assert [m["map_name"] for m in temp_db.get_custom_maps(2)] == ["Belaya"]
     assert interaction.response.edited is not None   # the panel was redrawn
+
+
+LAYERS = [
+    {"raw_name": "Belaya_TC_v1", "gamemode_token": "TC", "layer_version": "v1"},
+    {"raw_name": "Belaya_AAS_v1", "gamemode_token": "AAS", "layer_version": "v1"},
+]
+
+
+def test_details_view_has_two_optional_selects_and_save():
+    view = botmod.CustomMapDetailsView("de", 1, "Belaya", LAYERS,
+                                       ["USA", "RGF"], ["CombinedArms"])
+    selects = _selects(view)
+    assert len(selects) == 2
+    assert all(s.min_values == 0 for s in selects)
+    assert [o.value for o in selects[0].options] == ["USA", "RGF"]
+    assert [o.value for o in selects[1].options] == ["CombinedArms"]
+    assert len(_buttons(view)) == 1        # save
+
+
+def test_details_view_caps_selects_at_the_discord_limit():
+    many = [f"F{i}" for i in range(40)]
+    view = botmod.CustomMapDetailsView("de", 1, "Belaya", LAYERS, many, many)
+    for select in _selects(view):
+        assert len(select.options) == 25
+    assert view.truncated is True
+
+
+def test_details_view_starts_with_nothing_selected():
+    view = botmod.CustomMapDetailsView("de", 1, "Belaya", LAYERS,
+                                       ["USA"], ["CombinedArms"])
+    assert view.selected_factions == []
+    assert view.selected_units == []
+
+
+def test_modal_carries_two_text_inputs():
+    modal = botmod.CustomMapModal("de", 1)
+    assert len(modal.children) == 2
+    assert modal.layers_input.required is True
+    assert modal.name_input.required is False
