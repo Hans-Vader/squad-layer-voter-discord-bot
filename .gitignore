@@ -6,3 +6,6 @@ reference/
 *.pkl
 *.log
 .idea/
+
+# Superpowers working documents (specs, plans) — kept out of the repo
+docs/superpowers/
