@@ -300,3 +300,36 @@ def remove_custom_map(guild_id: int, map_name: str) -> bool:
     """Delete a custom map and its materialized rows."""
     db.delete_layers(db.custom_source(guild_id), map_name)
     return db.delete_custom_map(guild_id, map_name)
+
+
+def colliding_map_name(name: str) -> Optional[str]:
+    """A fetched map whose name the blacklist could not tell apart from `name`.
+
+    `db.get_unique_maps` excludes a blacklisted map by case-insensitive prefix
+    and pays no attention to which source it came from, so blacklisting either
+    of two names where one is a prefix of the other hides both. Refusing that
+    collision when the custom map is created is far cheaper than teaching the
+    shared filter about sources — and the admin is one text field away from a
+    name that does not collide.
+
+    Only fetched sources are compared: re-using an existing custom map's name
+    is the documented way to replace it.
+
+    Returns the first colliding map name, or None. One concrete example is
+    enough for the admin to act on.
+    """
+    candidate = (name or "").strip().lower()
+    if not candidate:
+        return None
+
+    fetched = db.get_fetched_sources()
+    if not fetched:
+        # An empty allowed_sources list means "no filter" downstream, which
+        # would compare against every guild's custom rows.
+        return None
+
+    for existing in db.get_unique_maps(allowed_sources=fetched):
+        other = existing.lower()
+        if candidate.startswith(other) or other.startswith(candidate):
+            return existing
+    return None

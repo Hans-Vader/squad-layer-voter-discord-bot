@@ -1026,6 +1026,10 @@ _STRINGS: dict[str, dict[str, str]] = {
         "de": "Maximal {max} Layer pro Map ({count} eingegeben).",
         "en": "At most {max} layers per map ({count} given).",
     },
+    "custom_map.err_name_collision": {
+        "de": "Der Anzeigename lässt sich nicht von der vorhandenen Karte **{map}** unterscheiden. Blacklist-Einträge greifen quellenübergreifend per Präfix, beide würden also gemeinsam ausgeblendet. Bitte einen eindeutigen Namen wählen.",
+        "en": "The display name can't be told apart from the existing map **{map}**. Blacklist entries match by prefix across every source, so both would be hidden together. Please choose a distinct name.",
+    },
     "admin.select_for_vote": {
         "de": "Für Abstimmung auswählen",
         "en": "Select for Vote",

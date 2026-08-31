@@ -2620,6 +2620,16 @@ class CustomMapModal(ui.Modal):
         map_name = custom_layers.normalize_map_name(
             str(self.name_input.value), map_token)
 
+        clash = custom_layers.colliding_map_name(map_name)
+        if clash:
+            await interaction.response.send_message(
+                embed=discord.Embed(
+                    description=t("custom_map.err_name_collision",
+                                  self.lang, map=clash),
+                    color=discord.Color.red()),
+                ephemeral=True)
+            return
+
         view = CustomMapDetailsView(self.lang, self.db_id, map_name, layers,
                                     faction_ids, unit_types)
         embed = discord.Embed(

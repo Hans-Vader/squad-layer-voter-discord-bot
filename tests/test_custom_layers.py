@@ -483,3 +483,32 @@ def test_allowed_sources_property_offers_the_custom_source(temp_db):
     for table in (botmod._EDIT_PROPERTIES, botmod._GUILD_EDIT_PROPERTIES):
         prop = next(p for p in table if p["key"] == "allowed_sources")
         assert prop["source"](1) == ["main", "custom:1"]
+
+
+def test_colliding_map_name_flags_a_prefix_in_either_direction(temp_db):
+    # The blacklist filter matches by case-insensitive prefix across every
+    # source, so either direction of prefix means both maps would be hidden.
+    _seed_layer(temp_db, "BelayaDowns_AAS_v1", "main", "Belaya Downs", "AAS")
+    assert cl.colliding_map_name("Belaya") == "Belaya Downs"
+    assert cl.colliding_map_name("belaya downs extra") == "Belaya Downs"
+    assert cl.colliding_map_name("Kokan") is None
+
+
+def test_colliding_map_name_ignores_custom_maps(temp_db):
+    # Re-using an existing custom map's name is the documented way to replace
+    # it, so only fetched sources are compared against.
+    _seed_layer(temp_db, "AlBasrah_AAS_v1", "main", "Al Basrah", "AAS")
+    _seed_layer(temp_db, "Belaya_TC_v1", "custom:1", "Belaya", "TerritoryControl")
+    assert cl.colliding_map_name("Belaya") is None
+
+
+def test_colliding_map_name_is_none_when_nothing_was_fetched(temp_db):
+    # get_unique_maps(allowed_sources=[]) means "no filter", which would
+    # compare against every guild's custom rows. The empty case is guarded.
+    _seed_layer(temp_db, "Belaya_TC_v1", "custom:1", "Belaya", "TerritoryControl")
+    assert cl.colliding_map_name("Belaya") is None
+
+
+def test_colliding_map_name_tolerates_blank_input(temp_db):
+    _seed_layer(temp_db, "AlBasrah_AAS_v1", "main", "Al Basrah", "AAS")
+    assert cl.colliding_map_name("   ") is None
