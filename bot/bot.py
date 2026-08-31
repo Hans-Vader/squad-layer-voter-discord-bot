@@ -2466,9 +2466,10 @@ class CustomMapsView(AutoDisableView):
     """Sub-panel of the Admin panel for admin-defined maps.
 
     Reuses `AdminButton` for the entry point, which reads `self.view.db_id`, so
-    this view exposes the same attribute the parent panel does. Deleting is
-    immediate — re-adding the map is the undo, and the definition is four lines
-    of text.
+    this view exposes the same attribute the parent panel does. Deleting goes
+    through the same confirmation step as the other destructive admin actions:
+    it drops the map's definition and every cached layer built from it, and a
+    misclick in a dropdown is a cheap way to lose both.
     """
 
     def __init__(self, lang: str, db_id: int, maps: list[dict]):
@@ -2507,12 +2508,34 @@ class CustomMapsView(AutoDisableView):
         await interaction.response.send_modal(CustomMapModal(self.lang, self.db_id))
 
     async def _delete(self, interaction: discord.Interaction):
+        """Ask before removing. Deleting a map drops its definition and every
+        cached layer built from it, so it gets the same confirmation step as
+        the other destructive admin actions."""
         map_name = self.delete_select.values[0]
-        custom_layers.remove_custom_map(interaction.guild_id, map_name)
-        self.stop()  # retire this view; _render_custom_maps attaches a fresh one
-        await _render_custom_maps(interaction, self.db_id, self.lang,
-                                  notice=t("custom_map.deleted", self.lang,
-                                           map=map_name))
+        entry = next((m for m in db.get_custom_maps(interaction.guild_id)
+                      if m["map_name"] == map_name), None)
+        layer_count = len((entry or {}).get("payload", {}).get("layers") or [])
+
+        embed = discord.Embed(
+            title=t("custom_map.confirm_delete_title", self.lang),
+            description=t("custom_map.confirm_delete_prompt", self.lang,
+                          map=map_name, count=layer_count),
+            color=discord.Color.orange(),
+        )
+
+        async def confirm_cb(inter: discord.Interaction, _db_id: int):
+            # Keyed on the confirming interaction's guild, never on a value
+            # carried in the component.
+            custom_layers.remove_custom_map(inter.guild_id, map_name)
+            await _render_custom_maps(inter, _db_id, self.lang,
+                                      notice=t("custom_map.deleted", self.lang,
+                                               map=map_name))
+
+        self.stop()  # retire this view; the confirmation takes over the message
+        await interaction.response.edit_message(
+            embed=embed,
+            view=_bind(ConfirmActionView(self.lang, confirm_cb, self.db_id), interaction),
+        )
 
     async def _back(self, interaction: discord.Interaction):
         self.stop()  # retire this view; handle_admin_panel attaches a fresh one

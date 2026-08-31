@@ -994,6 +994,14 @@ _STRINGS: dict[str, dict[str, str]] = {
         "de": "✅ **{map}** ersetzt — {count} Layer.",
         "en": "✅ **{map}** replaced — {count} layers.",
     },
+    "custom_map.confirm_delete_title": {
+        "de": "Eigene Map löschen?",
+        "en": "Delete custom map?",
+    },
+    "custom_map.confirm_delete_prompt": {
+        "de": "**{map}** und die {count} daraus erzeugten Layer werden entfernt. Die Map lässt sich jederzeit neu anlegen.",
+        "en": "**{map}** and the {count} layers built from it will be removed. You can register the map again at any time.",
+    },
     "custom_map.deleted": {
         "de": "🗑️ **{map}** gelöscht.",
         "en": "🗑️ **{map}** deleted.",
