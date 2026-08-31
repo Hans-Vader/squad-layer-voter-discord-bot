@@ -1,8 +1,11 @@
 """Composition of the Custom Maps admin views."""
 
+import asyncio
+
 import discord
 
 import bot as botmod
+import custom_layers as cl  # noqa: F401  (import guard: the view calls into it)
 
 
 def _actions(view):
@@ -46,3 +49,39 @@ def test_custom_maps_delete_picker_lists_every_map():
         {"guild_id": 1, "map_name": "Kokan", "payload": {"layers": []}},
     ])
     assert [o.value for o in _selects(view)[0].options] == ["Belaya", "Kokan"]
+
+
+class _StubSelect:
+    """Stands in for the delete picker so the test never touches discord internals."""
+
+    def __init__(self, values):
+        self.values = values
+
+
+class _StubResponse:
+    def __init__(self):
+        self.edited = None
+
+    async def edit_message(self, **kwargs):
+        self.edited = kwargs
+
+
+class _StubInteraction:
+    def __init__(self, guild_id):
+        self.guild_id = guild_id
+        self.response = _StubResponse()
+
+
+def test_delete_is_scoped_to_the_acting_guild(temp_db):
+    temp_db.upsert_custom_map(1, "Belaya", {"layers": [], "factions": [], "units": []})
+    temp_db.upsert_custom_map(2, "Belaya", {"layers": [], "factions": [], "units": []})
+
+    view = botmod.CustomMapsView("de", 1, temp_db.get_custom_maps(1))
+    view.delete_select = _StubSelect(["Belaya"])
+    interaction = _StubInteraction(1)
+
+    asyncio.run(view._delete(interaction))
+
+    assert temp_db.get_custom_maps(1) == []
+    assert [m["map_name"] for m in temp_db.get_custom_maps(2)] == ["Belaya"]
+    assert interaction.response.edited is not None   # the panel was redrawn

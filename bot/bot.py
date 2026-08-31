@@ -2496,6 +2496,11 @@ async def _render_custom_maps(interaction: discord.Interaction, db_id: int,
             for m in maps
         ]
         body = "\n".join(lines)
+        # The delete picker is capped at 25 options (Discord's hard limit) but
+        # the list above shows every map, so past 25 explain why the extras
+        # aren't selectable instead of leaving it unexplained.
+        if len(maps) > 25:
+            body += "\n\n" + t("custom_map.truncated", lang)
     else:
         body = t("custom_map.none", lang)
 
