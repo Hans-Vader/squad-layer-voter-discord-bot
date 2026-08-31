@@ -69,7 +69,7 @@ discord.py registers **13 slash commands**, in three permission tiers. Per-event
 | Info | View event info, your suggestions and recent winners — and pick any suggested layer to see its full per-team vehicle layout |
 | Admin | Open the admin panel (organizer only) |
 
-The **Admin panel** holds the per-event actions that used to be slash commands: **Open / Reopen Suggestions**, **Manage Suggestions** (a sub-panel with **Close Suggestions** and **Remove Suggestion** while suggestions are open), **Select for Vote**, **End Vote**, **Edit Event** (a DM dialog for gamemodes, blacklists, suggestion limits, voting parameters, and the Mirror Match toggle), **Edit Allow-list** (gate the event to specific roles/users), **Custom Maps** (register a map's layers by hand — guild-wide, so every event in the server can suggest it), and **Delete Event**. Gated events also surface a **Join Voting** button on the poll.
+The **Admin panel** holds the per-event actions that used to be slash commands: **Open / Reopen Suggestions**, **Manage Suggestions** (a sub-panel with **Close Suggestions** and **Remove Suggestion** while suggestions are open), **Select for Vote**, **End Vote**, **Edit Event** (a DM dialog for gamemodes, blacklists, suggestion limits, voting parameters, and the Mirror Match toggle), **Edit Allow-list** (gate the event to specific roles/users), **Custom Maps** (register a map's layers by hand — guild-wide, so it's a shared layer source every event can opt into), and **Delete Event**. Gated events also surface a **Join Voting** button on the poll.
 
 ## Installation
 

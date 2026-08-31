@@ -184,19 +184,18 @@ the panel says so under the list).
 > A layer whose game mode is switched off in your defaults will not appear
 > in suggestions — the save confirmation tells you which modes that affects.
 
-Custom maps can't be hidden with the **Allowed Layer Sources** setting
-(Edit Event, or the guild-wide default via `/config_defaults`) — once a
-custom map has layers, its source is always available to suggesters. The
-clean way to hide one is to **delete it here**; re-adding it later is one
-paste.
+**Custom Maps** is a layer source like any other. New events include it
+automatically — the creation wizard pre-selects every source it offers. An
+event created *before* your first custom map keeps the sources it was created
+with, so open **Edit Event → Allowed Layer Sources** once and tick it. To
+switch custom maps off for a whole event, or server-wide via
+`/config_defaults`, untick it there.
 
-**Edit Event → Blacklisted Maps** also works, but be careful with it:
-blacklisting matches a map *name* across every source, and by prefix. Adding
-`Belaya` hides the stock Belaya and `Belaya Downs` along with your custom
-one. Only reach for it when your custom map's display name is unique. The
-guild-wide **Blacklisted Maps** default in `/config_defaults` can't be used
-for this at all — its map picker is scoped to the main layer sources and
-never lists a custom map.
+To remove a single map, delete it in **Admin → Custom Maps**. **Edit Event →
+Blacklisted Maps** also hides one, but blacklisting matches a map *name*
+across every source and by prefix, so a name shared with a stock map would
+hide both — the bot refuses to register a custom map with such a name in the
+first place.
 
 ### Viewing Settings
 

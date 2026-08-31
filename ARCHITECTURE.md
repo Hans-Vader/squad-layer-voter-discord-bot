@@ -181,15 +181,14 @@ save; a delete instead removes the materialized rows directly
 (`remove_custom_map()` → `db.delete_layers()`), since there is nothing left
 to re-derive. When no fetched source is cached yet, materialization is a
 no-op — the definition is still stored, and the next `/refresh_layers` or
-save picks it up. `db.get_unique_sources()` excludes `custom:%`, so a
-guild's custom maps never appear in the source picker at event creation or
-in the **Allowed Layer Sources** list of the Edit Event dialog / `/config_defaults`;
-`_resolve_event_sources()` appends the guild's own custom source afterwards,
-whenever it actually holds layers, so a custom map is never *chosen* into an
-allow-list yet is always reachable in the suggestion flow. Per that
-function's docstring, this is deliberate: a guild's own maps aren't a data
-set to opt into or out of via Allowed Layer Sources — the map blacklist is
-the tool for hiding one.
+save picks it up. `get_fetched_sources()` returns only what came from a
+layers.json URL; `get_guild_sources(guild_id)` adds the guild's own custom
+source when it holds layers. There is deliberately no guild-blind variant:
+every caller has to say which of the two questions it is asking, because a
+guild-blind source list reached from guild-scoped code is what leaked one
+guild's custom rows into another's picker. `_resolve_event_sources` therefore
+has no special case for custom sources at all — the ordinary `allowed_sources`
+filter governs them.
 
 ### Configuration & i18n
 
