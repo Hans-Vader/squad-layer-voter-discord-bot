@@ -597,6 +597,41 @@ def get_unique_sources() -> list[str]:
     return [r[0] for r in rows]
 
 
+def get_fetched_sources() -> list[str]:
+    """Sorted source names that came from a layers.json URL.
+
+    Never includes a guild's custom source. This is the list to reach for when
+    the question is about the layer *data* — which data sets were fetched,
+    which one can lend faction metadata to a custom layer — rather than about
+    what a particular guild may offer its users.
+    """
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT DISTINCT source FROM layer_cache "
+        "WHERE source NOT LIKE ? ORDER BY source",
+        (f"{CUSTOM_SOURCE_PREFIX}%",),
+    ).fetchall()
+    conn.close()
+    return [r[0] for r in rows]
+
+
+def get_guild_sources(guild_id: int) -> list[str]:
+    """Sources this guild may draw from: the fetched ones, then its own.
+
+    The custom source is appended last, and only when it actually holds
+    layers, so a guild without custom maps sees exactly the fetched list.
+
+    Naming a guild is mandatory — there is deliberately no guild-blind variant
+    of this question. Reaching for one is how another guild's custom rows
+    leaked into a picker before.
+    """
+    sources = get_fetched_sources()
+    custom = custom_source(guild_id)
+    if has_layers_for_source(custom):
+        sources.append(custom)
+    return sources
+
+
 # ---------------------------------------------------------------------------
 # Custom (admin-defined) maps
 # ---------------------------------------------------------------------------

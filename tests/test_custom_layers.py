@@ -431,3 +431,31 @@ def test_save_only_materializes_the_map_being_saved(temp_db):
     assert cl.save_custom_map(1, "Kokan", ["Kokan_AAS_v1"], [], []) == 1
     # Saving Kokan must not have touched Belaya's rows either way.
     assert temp_db.count_layers(source, "Belaya") == 0
+
+
+def test_get_fetched_sources_excludes_custom(temp_db):
+    _seed_layer(temp_db, "AlBasrah_AAS_v1", "main", "Al Basrah", "AAS")
+    _seed_layer(temp_db, "Belaya_TC_v1", "custom:1", "Belaya", "TerritoryControl")
+    assert temp_db.get_fetched_sources() == ["main"]
+
+
+def test_guild_sources_append_only_the_guilds_own(temp_db):
+    _seed_layer(temp_db, "AlBasrah_AAS_v1", "main", "Al Basrah", "AAS")
+    _seed_layer(temp_db, "Belaya_TC_v1", "custom:1", "Belaya", "TerritoryControl")
+    _seed_layer(temp_db, "Kokan_TC_v1", "custom:2", "Kokan", "TerritoryControl")
+    assert temp_db.get_guild_sources(1) == ["main", "custom:1"]
+    assert temp_db.get_guild_sources(2) == ["main", "custom:2"]
+
+
+def test_guild_sources_omit_a_custom_source_with_no_layers(temp_db):
+    _seed_layer(temp_db, "AlBasrah_AAS_v1", "main", "Al Basrah", "AAS")
+    assert temp_db.get_guild_sources(1) == ["main"]
+
+
+def test_guild_sources_put_the_custom_source_last(temp_db):
+    # Fetched sources sort alphabetically; the guild's own always comes last,
+    # so a picker's order is stable and the custom entry reads as distinct.
+    _seed_layer(temp_db, "zulu_AAS_v1", "zulu", "Zulu", "AAS")
+    _seed_layer(temp_db, "alpha_AAS_v1", "alpha", "Alpha", "AAS")
+    _seed_layer(temp_db, "Belaya_TC_v1", "custom:1", "Belaya", "TerritoryControl")
+    assert temp_db.get_guild_sources(1) == ["alpha", "zulu", "custom:1"]
