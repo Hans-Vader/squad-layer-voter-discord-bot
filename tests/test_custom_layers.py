@@ -357,3 +357,19 @@ def test_materialization_is_scoped_when_a_guild_is_given(temp_db):
                                            "factions": [], "units": []})
     assert cl.materialize_custom_layers(1) == 1
     assert temp_db.has_layers_for_source(temp_db.custom_source(2)) is False
+
+
+def test_count_layers_is_scoped_to_source_and_map(temp_db):
+    _seed_layer(temp_db, "Belaya_TC_v1", "custom:1", "Belaya", "TerritoryControl")
+    _seed_layer(temp_db, "Kokan_TC_v1", "custom:1", "Kokan", "TerritoryControl")
+    assert temp_db.count_layers("custom:1", "Belaya") == 1
+    assert temp_db.count_layers("custom:1", "Nope") == 0
+
+
+def test_save_reports_zero_when_nothing_could_be_materialized(temp_db):
+    # No fetched source cached, so there is no faction metadata to borrow and
+    # materialization writes nothing — the save must not claim success.
+    written = cl.save_custom_map(1, "Belaya", ["Belaya_TC_v1"], [], [])
+    assert written == 0
+    # The definition is still stored, so a later refresh can materialize it.
+    assert [m["map_name"] for m in temp_db.get_custom_maps(1)] == ["Belaya"]

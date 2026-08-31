@@ -548,6 +548,22 @@ def delete_layers(source: str, map_name: str) -> int:
     return count
 
 
+def count_layers(source: str, map_name: str) -> int:
+    """How many cached layer rows one custom map currently has.
+
+    Callers report this back to the admin instead of the number of layers
+    they asked for: materialization is a no-op when no fetched source is
+    cached, and a save that silently wrote nothing must not look successful.
+    """
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT COUNT(*) FROM layer_cache WHERE source = ? AND map_name = ?",
+        (source, map_name),
+    ).fetchone()
+    conn.close()
+    return row[0] if row else 0
+
+
 def get_map_sizes(allowed_sources: Optional[list[str]] = None) -> "dict[str, float]":
     """Return {map_name: max_layer_size_km} from the cache.
 

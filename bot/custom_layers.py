@@ -261,7 +261,7 @@ def materialize_custom_layers(guild_id: Optional[int] = None) -> int:
 
 def save_custom_map(guild_id: int, map_name: str, raw_names: list[str],
                     faction_ids: list[str], unit_types: list[str]) -> int:
-    """Store one custom map and materialize it. Returns layers written.
+    """Store one custom map and materialize it. Returns layers actually cached.
 
     The cached rows are dropped first so a re-save that removes a layer doesn't
     leave the old one behind — upsert alone would never delete it.
@@ -272,10 +272,11 @@ def save_custom_map(guild_id: int, map_name: str, raw_names: list[str],
         "units": list(unit_types),
     })
     db.delete_layers(db.custom_source(guild_id), map_name)
-    # Materialization covers every map of the guild, so its row count would
-    # over-report this one. The caller wants this map's size.
+    # Materialization covers every map of the guild, so its own row count would
+    # over-report this one — and it silently writes nothing when no reference
+    # source is cached. Report what actually reached the cache.
     materialize_custom_layers(guild_id)
-    return len(raw_names)
+    return db.count_layers(db.custom_source(guild_id), map_name)
 
 
 def remove_custom_map(guild_id: int, map_name: str) -> bool:
