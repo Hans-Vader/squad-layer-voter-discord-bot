@@ -918,6 +918,10 @@ _STRINGS: dict[str, dict[str, str]] = {
         "de": "Vorschläge schließen",
         "en": "Close Suggestions",
     },
+    "admin.manage_suggestions": {
+        "de": "Vorschläge bearbeiten",
+        "en": "Manage Suggestions",
+    },
     "admin.select_for_vote": {
         "de": "Für Abstimmung auswählen",
         "en": "Select for Vote",

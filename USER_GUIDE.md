@@ -115,7 +115,7 @@ The event name appears as the embed title, in the voting thread name (for gated 
 Users click "Suggest Layer" and submit their picks.
 
 **Step 4: Close Suggestions**
-- Click **Admin → Close Suggestions** (suggestions can also auto-close at the deadline when there are more suggestions than vote slots)
+- Click **Admin → Manage Suggestions → Close Suggestions** (suggestions can also auto-close at the deadline when there are more suggestions than vote slots)
 - Closed too early? Click **Admin → Reopen Suggestions** to accept picks again. It stays open until you close it again (no auto-close timer).
 
 **Step 5: Select Layers & Start Voting**
@@ -132,7 +132,9 @@ Users click "Suggest Layer" and submit their picks.
 ### Admin Panel
 
 Click the **"Admin"** button on the event embed for quick actions:
-- Open / Close / Reopen suggestions
+- Open suggestions
+- **Manage Suggestions** — while suggestions are open, this sub-panel holds **Close Suggestions** and **Remove Suggestion** (remove someone else's pick); **Back** returns to the panel
+- Reopen suggestions, and remove a suggestion, once suggestions are closed
 - Select layers for voting (confirming starts the poll)
 - End voting
 - Delete the event

@@ -22,7 +22,7 @@ Events are driven from the **Admin panel** (the `Admin` button on the event embe
 1. Organizer creates an event with `/create_layer_suggestion` (creation wizard)
 2. Suggestion phase opens — automatically at the scheduled start time, or manually via **Admin → Open Suggestions**
 3. Users suggest layers by clicking the **Suggest Layer** button
-4. Suggestions close — automatically at the deadline, or manually via **Admin → Close Suggestions** (an organizer can reopen with **Reopen Suggestions**)
+4. Suggestions close — automatically at the deadline, or manually via **Admin → Manage Suggestions → Close Suggestions** (an organizer can reopen with **Reopen Suggestions**)
 5. Organizer picks or randomizes the layers for voting via **Admin → Select for Vote** (skipped automatically when suggestions ≤ vote slots)
 6. Voting runs as a Discord native poll (gated events get a private thread)
 7. Poll ends — automatically at its duration, or manually via **Admin → End Vote** — and the winner (plus its `AdminChangeLayer` command) is saved to history
@@ -68,7 +68,7 @@ discord.py registers **13 slash commands**, in three permission tiers. Per-event
 | Info | View event info, your suggestions and recent winners — and pick any suggested layer to see its full per-team vehicle layout |
 | Admin | Open the admin panel (organizer only) |
 
-The **Admin panel** holds the per-event actions that used to be slash commands: **Open / Close / Reopen Suggestions**, **Select for Vote**, **End Vote**, **Edit Event** (a DM dialog for gamemodes, blacklists, suggestion limits, voting parameters, and the Mirror Match toggle), **Edit Allow-list** (gate the event to specific roles/users), and **Delete Event**. Gated events also surface a **Join Voting** button on the poll.
+The **Admin panel** holds the per-event actions that used to be slash commands: **Open / Reopen Suggestions**, **Manage Suggestions** (a sub-panel with **Close Suggestions** and **Remove Suggestion** while suggestions are open), **Select for Vote**, **End Vote**, **Edit Event** (a DM dialog for gamemodes, blacklists, suggestion limits, voting parameters, and the Mirror Match toggle), **Edit Allow-list** (gate the event to specific roles/users), and **Delete Event**. Gated events also surface a **Join Voting** button on the poll.
 
 ## Installation
 

@@ -25,7 +25,7 @@ There are **two independent drivers** of every transition: organizer interaction
 | Transition | Manual driver (Admin panel button) | Automatic driver (scheduler) |
 |---|---|---|
 | `created → suggestions_open` | `admin_open_suggestions` ("Open Suggestions") — bot.py:1864 | when `suggestion_start_time` has passed (propagates `suggestion_duration_seconds` into `suggestion_end_time`) |
-| `suggestions_open → suggestions_closed` | `admin_close_suggestions` / `_do_close_suggestions` (with confirm) — bot.py:1913 | `_handle_suggestion_timeout` at `suggestion_end_time`, **only when there are more suggestions than vote slots** |
+| `suggestions_open → suggestions_closed` | `admin_close_suggestions` / `_do_close_suggestions` (with confirm), reached via the **Manage Suggestions** sub-panel — bot.py:2513 | `_handle_suggestion_timeout` at `suggestion_end_time`, **only when there are more suggestions than vote slots** |
 | `suggestions_closed → suggestions_open` | `admin_reopen_suggestions` ("Reopen Suggestions", clears auto-close timer) — bot.py:1974 | — |
 | `suggestions_open → voting` (**skips closed**) | — | `_handle_suggestion_timeout` when `suggestion_count ≤ max_voting_layers` → `_auto_start_poll` (bot.py:2403) |
 | `suggestions_closed → voting` | `admin_select_for_vote` → `ConfirmSelectionButton` → `_do_start_vote` (sets `selected_for_vote`, `phase=voting`, calls `_start_poll`) — bot.py:2012 | — |
@@ -95,7 +95,7 @@ The convention `event_action:<action>:<db_id>` is the single source of truth for
 - **Organizer-only** (`check_organizer` / `has_organizer_role`): `/refresh_layers` (bot.py:4493), `/create_layer_suggestion` (bot.py:4517), `/delete_event` (bot.py:4831), `/update` (bot.py:4976), `/history_add` (bot.py:5077), `/history_remove` (bot.py:5300).
 - **User-level** (configured guild only, no role check): `/history` (bot.py:5002).
 
-**Naming gotchas:** the create-event command is `/create_layer_suggestion`, not `/create_event`. There is **no** `/start_vote` slash command — voting starts from the Admin panel button or the auto-advance path. The `/config_*` commands were removed in "Phase 3" (comment at bot.py:4482-4490); per-event config (gamemodes, blacklists, limits, voting params) now lives in the **Admin → Edit DM dialog**, which writes the per-event `config` snapshot. Manual phase transitions are driven by `AdminPanelView` / `AdminButton` (bot.py:1763-1831), **not** by slash commands.
+**Naming gotchas:** the create-event command is `/create_layer_suggestion`, not `/create_event`. There is **no** `/start_vote` slash command — voting starts from the Admin panel button or the auto-advance path. The `/config_*` commands were removed in "Phase 3" (comment at bot.py:4482-4490); per-event config (gamemodes, blacklists, limits, voting params) now lives in the **Admin → Edit DM dialog**, which writes the per-event `config` snapshot. Manual phase transitions are driven by `AdminPanelView` / `AdminButton` (bot.py:2285-2429), **not** by slash commands. The panel is one level deep: in `suggestions_open` the **Manage Suggestions** button swaps the panel for `ManageSuggestionsView` (bot.py:2331), which carries Close Suggestions, Remove Suggestion and a Back button that re-renders the panel via `handle_admin_panel(..., edit=True)`. `AdminButton` reads `self.view.db_id`, so it works unchanged in either view.
 
 ### Interaction / UI — suggestion dropdown chain + persistent views
 
@@ -198,7 +198,7 @@ Manual run (per README): `cd bot` then `python bot.py`. The SQLite path defaults
 | Concern | File(s) |
 |---|---|
 | Slash commands, permission tiers | `bot/bot.py:4385-5343` |
-| Event state machine + manual transitions (Admin panel) | `bot/bot.py:1763-2467` |
+| Event state machine + manual transitions (Admin panel) | `bot/bot.py:2241-2560` |
 | Background scheduler / auto-advance | `bot/bot.py:5449-5558` (`check_events_loop`), `bot.py:5350` (`_handle_suggestion_timeout`) |
 | Persistent views + startup re-binding | `bot/bot.py:145` (`setup_hook`), `bot.py:859` (`_view_for_phase`) |
 | Suggestion dropdown chain | `bot/bot.py:872-1540` |

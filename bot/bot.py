@@ -2238,8 +2238,14 @@ async def _show_vehicle_detail(interaction: discord.Interaction, db_id: int,
 # ADMIN PANEL
 # ═══════════════════════════════════════════════════════════════════════════
 
-async def handle_admin_panel(interaction: discord.Interaction, db_id: int):
-    """Show admin action buttons for a specific event."""
+async def handle_admin_panel(interaction: discord.Interaction, db_id: int,
+                             edit: bool = False):
+    """Show admin action buttons for a specific event.
+
+    `edit` replaces the current ephemeral message instead of sending a new one
+    — used by sub-panels navigating back. State is re-read from the DB, so the
+    panel reflects whatever the sub-panel changed.
+    """
     settings = db.get_guild_settings(interaction.guild_id)
     if not settings:
         await interaction.response.send_message(
@@ -2270,7 +2276,10 @@ async def handle_admin_panel(interaction: discord.Interaction, db_id: int):
     has_winner = bool(event.get("winning_layer"))
     view = _bind(AdminPanelView(phase, lang, record["db_id"], suggestion_count,
                                 has_winner=has_winner), interaction)
-    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+    if edit:
+        await interaction.response.edit_message(embed=embed, view=view)
+    else:
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
 class AdminPanelView(AutoDisableView):
@@ -2283,7 +2292,10 @@ class AdminPanelView(AutoDisableView):
         if phase == "created":
             self.add_item(AdminButton("open_suggestions", t("admin.open_suggestions", lang), discord.ButtonStyle.success, "▶️"))
         elif phase == "suggestions_open":
-            self.add_item(AdminButton("close_suggestions", t("admin.close_suggestions", lang), discord.ButtonStyle.secondary, "⏹️"))
+            # Close + Remove live one level down, behind Manage Suggestions.
+            self.add_item(AdminButton("manage_suggestions",
+                                      t("admin.manage_suggestions", lang),
+                                      discord.ButtonStyle.secondary, "📝"))
         elif phase == "suggestions_closed":
             self.add_item(AdminButton("select_for_vote", t("admin.select_for_vote", lang), discord.ButtonStyle.primary, "🗳️"))
             self.add_item(AdminButton("reopen_suggestions", t("admin.reopen_suggestions", lang), discord.ButtonStyle.secondary, "🔄"))
@@ -2293,8 +2305,9 @@ class AdminPanelView(AutoDisableView):
             # Copy-friendly plain-text version of the winner block.
             self.add_item(AdminButton("copy_result", t("admin.copy_result", lang), discord.ButtonStyle.secondary, "📋"))
 
-        # Removing a suggestion only makes sense before the poll is live.
-        if phase in ("suggestions_open", "suggestions_closed") and suggestion_count > 0:
+        # Removing a suggestion only makes sense before the poll is live. In
+        # `suggestions_open` it sits inside ManageSuggestionsView instead.
+        if phase == "suggestions_closed" and suggestion_count > 0:
             self.add_item(AdminButton("remove_suggestion",
                                       t("admin.remove_suggestion", lang),
                                       discord.ButtonStyle.secondary, "✂️"))
@@ -2315,6 +2328,63 @@ class AdminPanelView(AutoDisableView):
         self.add_item(AdminButton("delete_event", t("admin.delete_event", lang), discord.ButtonStyle.danger, "🗑️"))
 
 
+class ManageSuggestionsView(AutoDisableView):
+    """Sub-panel of the Admin panel holding the suggestion-phase actions.
+
+    Reuses `AdminButton`, which reads `self.view.db_id` — so this view only has
+    to expose the same attribute the parent panel does.
+    """
+
+    def __init__(self, lang: str, db_id: int, suggestion_count: int = 0):
+        super().__init__(timeout=120)
+        self.lang = lang
+        self.db_id = db_id
+
+        self.add_item(AdminButton("close_suggestions",
+                                  t("admin.close_suggestions", lang),
+                                  discord.ButtonStyle.secondary, "⏹️"))
+        if suggestion_count > 0:
+            self.add_item(AdminButton("remove_suggestion",
+                                      t("admin.remove_suggestion", lang),
+                                      discord.ButtonStyle.secondary, "✂️"))
+
+        back = ui.Button(label=t("button.back", lang),
+                         style=discord.ButtonStyle.secondary, emoji="⬅️")
+        back.callback = self._back
+        self.add_item(back)
+
+    async def _back(self, interaction: discord.Interaction):
+        self.stop()  # retire this view; handle_admin_panel attaches a fresh one
+        await handle_admin_panel(interaction, self.db_id, edit=True)
+
+
+async def admin_manage_suggestions(interaction: discord.Interaction, db_id: int):
+    """Replace the Admin panel with the suggestion-actions sub-panel."""
+    settings = db.get_guild_settings(interaction.guild_id)
+    lang = settings.get("language", "en") if settings else "en"
+
+    record = db.get_event_by_db_id(interaction.guild_id, db_id)
+    if not record:
+        await interaction.response.edit_message(
+            embed=discord.Embed(description=t("event.no_event", lang),
+                                color=discord.Color.red()),
+            view=None,
+        )
+        return
+
+    event = record["event"]
+    embed = discord.Embed(
+        title=t("admin.manage_suggestions", lang),
+        description=t("admin.suggestions_count", lang,
+                      count=len(event.get("suggestions", []))),
+        color=discord.Color.dark_red(),
+    )
+    view = ManageSuggestionsView(lang, db_id,
+                                 suggestion_count=len(event.get("suggestions", [])))
+    await interaction.response.edit_message(
+        embed=embed, view=_bind(view, interaction))
+
+
 class AdminButton(ui.Button):
     def __init__(self, action: str, label: str, style: discord.ButtonStyle, emoji: str):
         # Custom_ids are scoped to the action only; the per-event db_id lives
@@ -2330,6 +2400,8 @@ class AdminButton(ui.Button):
             # To override, edit the event's suggestion_duration_seconds via
             # the Admin → Edit DM dialog before clicking Open.
             await admin_open_suggestions(interaction, db_id)
+        elif self.action == "manage_suggestions":
+            await admin_manage_suggestions(interaction, db_id)
         elif self.action == "close_suggestions":
             await admin_close_suggestions(interaction, db_id)
         elif self.action == "reopen_suggestions":
