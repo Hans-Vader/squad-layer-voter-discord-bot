@@ -4,6 +4,7 @@ import pytest
 
 import custom_layers as cl
 import database
+import utils
 
 
 def _seed_layer(db, raw_name, source, map_name, gamemode, factions=None,
@@ -373,3 +374,38 @@ def test_save_reports_zero_when_nothing_could_be_materialized(temp_db):
     assert written == 0
     # The definition is still stored, so a later refresh can materialize it.
     assert [m["map_name"] for m in temp_db.get_custom_maps(1)] == ["Belaya"]
+
+
+def test_source_label_hides_the_internal_custom_name():
+    assert utils.source_label("main") == "main"
+    assert utils.source_label("custom:123456789", "de") != "custom:123456789"
+    assert utils.source_label("custom:123456789", "en") != "custom:123456789"
+
+
+def test_event_sources_append_the_guilds_custom_source(temp_db):
+    import bot as botmod
+    _seed_reference_cache(temp_db)
+    cl.save_custom_map(1, "Belaya", ["Belaya_TC_v1"], [], [])
+
+    sources = botmod._resolve_event_sources({"allowed_sources": ["main"]}, {}, 1)
+    assert sources == ["main", "custom:1"]
+
+
+def test_event_sources_skip_a_custom_source_with_no_layers(temp_db):
+    import bot as botmod
+    _seed_reference_cache(temp_db)
+    assert botmod._resolve_event_sources({"allowed_sources": ["main"]}, {}, 1) == ["main"]
+
+
+def test_event_sources_without_a_guild_id_are_unchanged(temp_db):
+    import bot as botmod
+    _seed_reference_cache(temp_db)
+    cl.save_custom_map(1, "Belaya", ["Belaya_TC_v1"], [], [])
+    assert botmod._resolve_event_sources({"allowed_sources": ["main"]}, {}) == ["main"]
+
+
+def test_units_source_redirects_custom_to_the_reference(temp_db):
+    import bot as botmod
+    _seed_reference_cache(temp_db)
+    assert botmod._units_source("main") == "main"
+    assert botmod._units_source("custom:1") == "main"

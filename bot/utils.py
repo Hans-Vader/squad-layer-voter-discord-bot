@@ -14,7 +14,7 @@ import discord
 from discord import Embed
 
 from i18n import t
-from config import ADMIN_IDS, LAYERS_JSON_SOURCES, SQUADCALC_BASE_URL
+from config import ADMIN_IDS, LAYERS_JSON_SOURCES, SQUADCALC_BASE_URL, CUSTOM_SOURCE_PREFIX
 
 logger = logging.getLogger("layer_vote")
 
@@ -532,6 +532,17 @@ def suggestion_matches(s1: dict, s2: dict) -> bool:
 # ---------------------------------------------------------------------------
 
 _SUPERMOD_SOURCE = "supermod"
+
+
+def source_label(source: str, lang: str = "en") -> str:
+    """User-facing name for a layer source.
+
+    A guild's admin-defined layers are stored under `custom:<guild_id>`; that
+    internal name must never reach a dropdown or an embed.
+    """
+    if source.startswith(CUSTOM_SOURCE_PREFIX):
+        return t("source.custom", lang)
+    return source
 
 
 def _event_uses_supermod(event: dict, settings: dict) -> bool:

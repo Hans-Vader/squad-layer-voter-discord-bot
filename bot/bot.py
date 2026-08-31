@@ -22,14 +22,15 @@ from discord import app_commands, ui
 from discord.ext import commands
 
 import database as db
-from config import TOKEN, ADMIN_IDS, EVENT_CHECK_INTERVAL, EVENT_CHECK_INTERVAL_FAST, EVENT_CRITICAL_WINDOW, LAYERS_JSON_SOURCES, DEBUG_MODE, is_excluded_layer
+import custom_layers
+from config import TOKEN, ADMIN_IDS, EVENT_CHECK_INTERVAL, EVENT_CHECK_INTERVAL_FAST, EVENT_CRITICAL_WINDOW, LAYERS_JSON_SOURCES, DEBUG_MODE, is_excluded_layer, CUSTOM_SOURCE_PREFIX
 from i18n import t, phase_name
 from utils import (
     has_organizer_role, is_guild_admin,
     check_role_gate,
     format_layer_short, format_layer_poll_option, suggestion_matches,
     format_vehicle_list, build_ping_messages,
-    build_event_embed, build_squadcalc_url, fit_lines_to_field,
+    build_event_embed, build_squadcalc_url, source_label, fit_lines_to_field,
     build_winner_copy_text,
     set_log_channel, send_to_log_channel,
     normalize_event_name,
@@ -312,6 +313,12 @@ async def fetch_and_cache_layers() -> int:
                 unique[raw_name] = layer
 
         count += await _cache_source_layers(source_name, unique.values(), faction_meta)
+
+    # Custom maps are stored separately and were wiped along with the cache —
+    # put them back so a refresh never costs an admin their hand-entered maps.
+    restored = custom_layers.materialize_custom_layers()
+    if restored:
+        logger.info("Re-materialized %d custom layer(s) after refresh", restored)
 
     return count
 
@@ -659,6 +666,18 @@ def _resolve_unit_object_key(units_map: dict, default_unit: str,
     return best[0]
 
 
+def _units_source(source: str) -> str:
+    """Which source's Units block describes a layer's vehicle loadouts.
+
+    Custom layers have no Units block of their own — they borrow the reference
+    source's, which is exactly where their factions' `defaultUnit` object names
+    were copied from, so _resolve_unit_object_key finds the same entries.
+    """
+    if source.startswith(CUSTOM_SOURCE_PREFIX):
+        return custom_layers.resolve_reference_source() or source
+    return source
+
+
 def get_team_vehicles(layer_data: dict, faction: str, team: int,
                       unit_type: Optional[str], units_map: dict) -> list:
     """Return the (trimmed) vehicle list for a faction's chosen loadout on a team.
@@ -698,7 +717,7 @@ def _attach_winner_vehicles(winner: dict) -> None:
         return
     # get_team_vehicles handles an empty units_map gracefully ([] = no fields
     # rendered), so no early-return needed when the source has no cached units.
-    units_map = db.get_source_units(source)
+    units_map = db.get_source_units(_units_source(source))
     winner["team1_vehicles"] = get_team_vehicles(
         layer_data, winner.get("team1_faction"), 1, winner.get("team1_unit"), units_map)
     winner["team2_vehicles"] = get_team_vehicles(
@@ -1215,7 +1234,7 @@ def _state_event_settings(state: "SuggestState") -> dict:
     return _event_settings(record["event"] if record else {}, settings)
 
 
-def _resolve_event_sources(event: dict, settings: dict) -> list[str]:
+def _resolve_event_sources(event: dict, settings: dict, guild_id: int = 0) -> list[str]:
     """Return the list of source names a user may pick from for this event.
 
     The event's stored `allowed_sources` (chosen by the admin at creation time)
@@ -1226,6 +1245,12 @@ def _resolve_event_sources(event: dict, settings: dict) -> list[str]:
 
     Falls back to all distinct sources currently in the cache when the event
     has no explicit selection (legacy events that predate this feature).
+
+    The guild's own custom source is appended last, whenever it actually holds
+    layers. Custom maps are never offered in a source picker, so an event that
+    stored an explicit selection would otherwise never see a map the organizer
+    added afterwards. The `has_layers_for_source` gate keeps guilds without
+    custom maps from gaining a pointless source-picker step.
     """
     explicit = event.get("allowed_sources") or []
     candidate = list(explicit) if explicit else db.get_unique_sources()
@@ -1233,6 +1258,11 @@ def _resolve_event_sources(event: dict, settings: dict) -> list[str]:
     guild_allowed = settings.get("allowed_sources") or []
     if guild_allowed:
         candidate = [s for s in candidate if s in guild_allowed]
+
+    if guild_id:
+        custom = db.custom_source(guild_id)
+        if custom not in candidate and db.has_layers_for_source(custom):
+            candidate.append(custom)
 
     return candidate
 
@@ -1286,10 +1316,11 @@ async def handle_suggest_start(interaction: discord.Interaction, db_id: int):
     state.mirror_match = bool(event.get("mirror_match", False))
     _suggest_sessions[interaction.user.id] = state
 
-    sources = _resolve_event_sources(event, settings)
+    sources = _resolve_event_sources(event, settings, interaction.guild_id)
     if len(sources) > 1:
         # Show source picker first; the map step runs after the user picks one.
-        options = [discord.SelectOption(label=s, value=s) for s in sources[:25]]
+        options = [discord.SelectOption(label=source_label(s, lang)[:100], value=s)
+                   for s in sources[:25]]
         view = _bind(SourceSelectView(options, lang), interaction)
         embed = discord.Embed(
             title=t("suggest.phase_title", lang),
@@ -1378,7 +1409,7 @@ async def _suggest_show_map_step(interaction: discord.Interaction, state: Sugges
     view = _bind(_build_map_picker_view(maps, lang, sizes), interaction)
     desc = t("suggest.select_map", lang)
     if state.source:
-        desc = f"**{t('suggest.source_label', lang)}:** {state.source}\n{desc}"
+        desc = f"**{t('suggest.source_label', lang)}:** {source_label(state.source, lang)}\n{desc}"
     embed = discord.Embed(
         title=t("suggest.phase_title", lang),
         description=desc,
@@ -1866,7 +1897,7 @@ async def _show_confirm(interaction: discord.Interaction, state: SuggestState, s
     mirror_line = f"\n**Mirror Match:** {t('suggest.mirror_on', lang)}" if state.mirror_effective else ""
 
     # Per-team vehicle layout for the chosen loadouts.
-    units_map = db.get_source_units(state.source or "")
+    units_map = db.get_source_units(_units_source(state.source or ""))
     t1_veh = format_vehicle_list(
         get_team_vehicles(state.layer_data, state.team1_faction, 1, state.team1_unit, units_map), lang)
     t2_veh = format_vehicle_list(
@@ -2213,7 +2244,7 @@ async def _show_vehicle_detail(interaction: discord.Interaction, db_id: int,
     source = suggestion.get("source") or ""
     layer_data = db.get_layer_by_raw_name(
         suggestion.get("raw_name", ""), allowed_sources=[source] if source else None)
-    units_map = db.get_source_units(source)
+    units_map = db.get_source_units(_units_source(source))
 
     embed = discord.Embed(
         title=t("info.vehicle_detail_title", lang, layer=format_layer_short(suggestion)),
@@ -4406,7 +4437,7 @@ class EventEditTarget(EditTarget):
 
     def scope_sources(self, obj, guild_id):
         settings = db.get_guild_settings(guild_id) or {}
-        return _resolve_event_sources(obj, settings)
+        return _resolve_event_sources(obj, settings, guild_id)
 
 
 class GuildEditTarget(EditTarget):
@@ -6379,9 +6410,10 @@ async def cmd_history_add(interaction: discord.Interaction):
     # Source picker first, mirroring the suggest flow. There's no event to
     # resolve sources from, so the candidates are all known sources, capped
     # by guild-level allowed_sources via _resolve_event_sources({}, ...).
-    sources = _resolve_event_sources({}, settings)
+    sources = _resolve_event_sources({}, settings, interaction.guild_id)
     if len(sources) > 1:
-        options = [discord.SelectOption(label=s[:100], value=s) for s in sources[:25]]
+        options = [discord.SelectOption(label=source_label(s, lang)[:100], value=s)
+                   for s in sources[:25]]
         view = _bind(SourceSelectView(options, lang), interaction)
         embed = discord.Embed(
             title=t("history.add_title", lang),
@@ -6889,6 +6921,13 @@ async def on_ready():
             logger.info(f"Cached {count} layers on startup")
         except Exception as e:
             logger.error(f"Failed to fetch layers on startup: {e}")
+
+    # Covers the normal boot where the cache is already populated and no fetch
+    # ran; a harmless repeat when one did, since materialization is idempotent.
+    try:
+        custom_layers.materialize_custom_layers()
+    except Exception as e:
+        logger.error(f"Failed to materialize custom layers on startup: {e}")
 
     # Notify all configured log channels that the bot is online
     for guild in bot.guilds:
