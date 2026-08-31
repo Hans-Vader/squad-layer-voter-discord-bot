@@ -139,8 +139,8 @@ Five tables (plus `source_units`, a small per-source vehicle-data cache alongsid
 | `guild_settings` | Per-guild config as a JSON blob merged over `DEFAULT_GUILD_SETTINGS` on read (organizer role, log channel, language, allowed gamemodes, blacklists, caps, `history_lookback_events`, allowed sources, create defaults). | database.py:113-118 |
 | `layer_cache` | Cached Squad layer metadata, rebuilt from `layers.json`. `UNIQUE(raw_name, source)`; indexed on `(map_name, gamemode)` and `source`. | database.py:120-139 |
 | `custom_layers` | Admin-defined maps: one row per `(guild_id, map_name)`, holding only what the organizer entered as a `payload` JSON blob (raw layer names, chosen factions, chosen unit types) plus `created_at`. The source of truth that `custom_layers.materialize_custom_layers()` expands into `layer_cache` rows. | database.py:160-166 |
-| `events` | Per-channel cycles; the whole event (incl. `suggestions`, `selected_for_vote`, votes, `winning_layer`, per-event `config`) lives in the `event_data` JSON blob. Indexed on `(guild_id, status)` and `(guild_id, channel_id, status)`. Multiple active events per channel allowed. | database.py:141-154 |
-| `voting_history` | Completed events: `all_suggestions` (JSON), `winning_layer` (JSON, nullable), `completed_at`. | database.py:156-166 |
+| `events` | Per-channel cycles; the whole event (incl. `suggestions`, `selected_for_vote`, votes, `winning_layer`, per-event `config`) lives in the `event_data` JSON blob. Indexed on `(guild_id, status)` and `(guild_id, channel_id, status)`. Multiple active events per channel allowed. | database.py:168-181 |
+| `voting_history` | Completed events: `all_suggestions` (JSON), `winning_layer` (JSON, nullable), `completed_at`. | database.py:183-193 |
 
 Key design points:
 
