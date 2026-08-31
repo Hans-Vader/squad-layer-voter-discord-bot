@@ -1365,7 +1365,14 @@ _SIZE_BUCKET_KEYS = {
     "small": "suggest.size_small",
     "medium": "suggest.size_medium",
     "large": "suggest.size_large",
+    # Admin-defined maps carry no size, so they get a dropdown of their own
+    # instead of a size label. Reuses the name the source picker already uses.
+    "custom": "source.custom",
 }
+
+# Discord caps a Select at 25 options and a message at 5 action rows.
+_MAP_SELECT_LIMIT = 25
+_MAP_SELECT_ROWS = 5
 
 
 def _bucket_for_size(size_km: Optional[float]) -> str:
@@ -1379,25 +1386,40 @@ def _bucket_for_size(size_km: Optional[float]) -> str:
     return "large"
 
 
-def _group_maps_by_size(maps: list[str], sizes: "dict[str, float]") -> "dict[str, list[str]]":
-    """Group map names by size bucket. Insertion order is small → medium → large
-    so the dropdowns appear in size order regardless of dict iteration."""
+def _group_maps_by_size(maps: list[str], sizes: "dict[str, float]",
+                        custom_maps: "set[str]" = frozenset()) -> "dict[str, list[str]]":
+    """Group map names into the dropdowns the picker will show.
+
+    Insertion order is small → medium → large → custom, so the dropdowns appear
+    in that order regardless of dict iteration.
+
+    Admin-defined maps are never sized — materialization writes `map_size_km`
+    as NULL because there is nothing to read it from — so bucketing them by
+    size would file every one of them under "medium" and tell the user nothing.
+    They get their own bucket instead.
+    """
     groups: dict[str, list[str]] = {key: [] for key, _ in _SIZE_BUCKETS}
+    groups["custom"] = []
     for m in maps:
-        groups[_bucket_for_size(sizes.get(m))].append(m)
+        groups["custom" if m in custom_maps else _bucket_for_size(sizes.get(m))].append(m)
     return groups
 
 
 def _build_map_picker_view(maps: list[str], lang: str,
-                           sizes: "dict[str, float]") -> ui.View:
-    """Build the map-select view: always split into Small/Medium/Large
-    dropdowns by canonical (largest-layer) size, with map counts in every
-    placeholder. Falls back to a single flat dropdown only when grouping
-    collapses to a single non-empty bucket (e.g. tiny custom sources).
+                           sizes: "dict[str, float]",
+                           custom_maps: "set[str]" = frozenset()) -> ui.View:
+    """Build the map-select view: Small/Medium/Large dropdowns by canonical
+    (largest-layer) size, plus a dropdown of the guild's own custom maps, with
+    map counts in every placeholder.
+
+    Falls back to a single flat dropdown only when grouping collapses to one
+    bucket that still fits Discord's option cap. Without that size check a
+    custom-only source with more than 25 maps built one oversized Select and
+    the whole suggestion flow failed with an HTTP 400.
     """
-    groups = _group_maps_by_size(maps, sizes)
+    groups = _group_maps_by_size(maps, sizes, custom_maps)
     non_empty = [(k, v) for k, v in groups.items() if v]
-    if len(non_empty) <= 1:
+    if len(non_empty) <= 1 and len(maps) <= _MAP_SELECT_LIMIT:
         options = [discord.SelectOption(label=m, value=m) for m in maps]
         placeholder = f"{t('suggest.select_map', lang).rstrip('.')} ({len(maps)})"
         return MapSelectView(options, lang, placeholder=placeholder)
@@ -1424,7 +1446,11 @@ async def _suggest_show_map_step(interaction: discord.Interaction, state: Sugges
         return
 
     sizes = db.get_map_sizes(allowed_sources=source_filter)
-    view = _bind(_build_map_picker_view(maps, lang, sizes), interaction)
+    # Which of these are the guild's own maps, so they get their own dropdown
+    # rather than being filed under a size they do not have.
+    custom_maps = set(db.get_unique_maps(
+        allowed_sources=[db.custom_source(state.guild_id)]))
+    view = _bind(_build_map_picker_view(maps, lang, sizes, custom_maps), interaction)
     desc = t("suggest.select_map", lang)
     if state.source:
         desc = f"**{t('suggest.source_label', lang)}:** {source_label(state.source, lang)}\n{desc}"
@@ -1474,28 +1500,47 @@ class MapSelectView(AutoDisableView):
 
 
 class GroupedMapSelectView(AutoDisableView):
-    """Map picker with one MapSelect per size bucket. Used when the map list
-    exceeds Discord's 25-option-per-Select cap (typical for the supermod source,
-    which has 43+ playable maps).
+    """Map picker with one MapSelect per bucket: Small/Medium/Large by
+    canonical size, plus the guild's own custom maps.
 
-    Buckets are always Small/Medium/Large (3 dropdowns), comfortably under the
-    5-component View cap.
+    A bucket wider than Discord's 25-option cap is spread over consecutive
+    dropdowns rather than truncated, so no map silently disappears — the
+    previous truncation only logged a warning the organizer never saw. Discord
+    allows five action rows per message, so the picker stops there; reaching
+    that needs more than 125 selectable maps.
     """
 
     def __init__(self, groups: "dict[str, list[str]]", lang: str):
         super().__init__(timeout=600)
         self.lang = lang
+
+        rows: list[tuple[str, list[str]]] = []
         for bucket_key, group_maps in groups.items():
             if not group_maps:
                 continue
             label = t(_SIZE_BUCKET_KEYS[bucket_key], lang)
-            if len(group_maps) > 25:
-                logger.warning(
-                    "Map size bucket '%s' has %d maps; truncating to 25 (Discord Select limit).",
-                    bucket_key, len(group_maps),
-                )
-            options = [discord.SelectOption(label=m, value=m) for m in group_maps[:25]]
-            self.add_item(MapSelect(options, lang, placeholder=f"{label} ({len(group_maps)})"))
+            chunks = [group_maps[i:i + _MAP_SELECT_LIMIT]
+                      for i in range(0, len(group_maps), _MAP_SELECT_LIMIT)]
+            for index, chunk in enumerate(chunks):
+                if len(chunks) > 1:
+                    # Only spell out a range when the bucket actually split.
+                    first = index * _MAP_SELECT_LIMIT + 1
+                    placeholder = f"{label} ({first}-{first + len(chunk) - 1})"
+                else:
+                    placeholder = f"{label} ({len(chunk)})"
+                rows.append((placeholder, chunk))
+
+        if len(rows) > _MAP_SELECT_ROWS:
+            dropped = sum(len(chunk) for _, chunk in rows[_MAP_SELECT_ROWS:])
+            logger.warning(
+                "Map picker needs %d dropdowns but Discord allows %d; %d map(s) not shown.",
+                len(rows), _MAP_SELECT_ROWS, dropped,
+            )
+            rows = rows[:_MAP_SELECT_ROWS]
+
+        for placeholder, chunk in rows:
+            options = [discord.SelectOption(label=m, value=m) for m in chunk]
+            self.add_item(MapSelect(options, lang, placeholder=placeholder))
 
 
 class MapSelect(ui.Select):

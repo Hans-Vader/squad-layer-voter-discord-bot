@@ -169,3 +169,63 @@ def test_save_reports_success_when_layers_were_written(temp_db):
     description = interaction.response.edited["embed"].description
     assert t("custom_map.saved", "en", map="Belaya", count=1) in description
     assert [m["map_name"] for m in temp_db.get_custom_maps(1)] == ["Belaya"]
+
+
+# ---------------------------------------------------------------------------
+# Map picker: custom maps get their own dropdown
+# ---------------------------------------------------------------------------
+
+def test_custom_maps_get_their_own_bucket():
+    groups = botmod._group_maps_by_size(["Belaya"], {}, {"Belaya"})
+    assert groups["custom"] == ["Belaya"]
+    assert groups["medium"] == []
+
+
+def test_unsized_regular_map_still_falls_back_to_medium():
+    # Only custom maps are exempt; a fetched map with no size keeps the old
+    # behaviour, so nothing changes for guilds without custom maps.
+    groups = botmod._group_maps_by_size(["Narva"], {}, set())
+    assert groups["medium"] == ["Narva"]
+    assert groups["custom"] == []
+
+
+def test_custom_bucket_comes_after_the_size_buckets():
+    groups = botmod._group_maps_by_size(
+        ["Narva", "Skorpo", "Belaya"],
+        {"Narva": 4.0, "Skorpo": 5.0},
+        {"Belaya"},
+    )
+    assert [k for k, v in groups.items() if v] == ["medium", "large", "custom"]
+
+
+def test_a_handful_of_custom_maps_still_uses_one_flat_dropdown():
+    maps = [f"Map{i:02d}" for i in range(25)]
+    view = botmod._build_map_picker_view(maps, "en", {}, set(maps))
+    assert isinstance(view, botmod.MapSelectView)
+    assert len(_selects(view)[0].options) == 25
+
+
+def test_more_than_25_custom_maps_split_across_dropdowns_losing_none():
+    # The case that used to build a single 26-option Select and fail the whole
+    # suggestion flow with an HTTP 400.
+    maps = [f"Map{i:02d}" for i in range(26)]
+    view = botmod._build_map_picker_view(maps, "en", {}, set(maps))
+
+    selects = _selects(view)
+    assert len(selects) == 2
+    assert all(len(s.options) <= 25 for s in selects)
+    offered = [o.value for s in selects for o in s.options]
+    assert sorted(offered) == sorted(maps)          # nothing silently dropped
+
+
+def test_custom_dropdown_is_labelled_as_its_own_thing():
+    from i18n import t
+
+    view = botmod._build_map_picker_view(
+        ["Narva", "Belaya"], "en", {"Narva": 4.0}, {"Belaya"})
+    placeholders = [s.placeholder for s in _selects(view)]
+    assert any(t("source.custom", "en") in p for p in placeholders)
+    # ...and the custom map is not sitting in the size dropdown
+    custom_select = next(s for s in _selects(view)
+                         if t("source.custom", "en") in s.placeholder)
+    assert [o.value for o in custom_select.options] == ["Belaya"]
