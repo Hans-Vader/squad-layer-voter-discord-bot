@@ -2361,6 +2361,12 @@ class AdminPanelView(AutoDisableView):
                                   t("admin.set_event_roles", lang),
                                   discord.ButtonStyle.primary, "🔐"))
 
+        # Guild-scoped, not event-scoped: an organizer registers a map once and
+        # every event in the guild can suggest it. It hangs off the event panel
+        # because that's the only admin surface the bot has.
+        self.add_item(AdminButton("custom_maps", t("admin.custom_maps", lang),
+                                  discord.ButtonStyle.secondary, "🗺️"))
+
         self.add_item(AdminButton("delete_event", t("admin.delete_event", lang), discord.ButtonStyle.danger, "🗑️"))
 
 
@@ -2421,6 +2427,94 @@ async def admin_manage_suggestions(interaction: discord.Interaction, db_id: int)
         embed=embed, view=_bind(view, interaction))
 
 
+class CustomMapsView(AutoDisableView):
+    """Sub-panel of the Admin panel for admin-defined maps.
+
+    Reuses `AdminButton` for the entry point, which reads `self.view.db_id`, so
+    this view exposes the same attribute the parent panel does. Deleting is
+    immediate — re-adding the map is the undo, and the definition is four lines
+    of text.
+    """
+
+    def __init__(self, lang: str, db_id: int, maps: list[dict]):
+        super().__init__(timeout=120)
+        self.lang = lang
+        self.db_id = db_id
+
+        add = ui.Button(label=t("custom_map.add", lang),
+                        style=discord.ButtonStyle.success, emoji="➕", row=0)
+        add.callback = self._add
+        self.add_item(add)
+
+        back = ui.Button(label=t("button.back", lang),
+                         style=discord.ButtonStyle.secondary, emoji="⬅️", row=0)
+        back.callback = self._back
+        self.add_item(back)
+
+        if maps:
+            options = [
+                discord.SelectOption(label=m["map_name"][:100],
+                                     value=m["map_name"][:100],
+                                     description=t("custom_map.layer_count", lang,
+                                                   count=len(m["payload"].get("layers") or []))[:100])
+                for m in maps[:25]
+            ]
+            self.delete_select = ui.Select(
+                placeholder=t("custom_map.delete_placeholder", lang),
+                options=options, min_values=1, max_values=1, row=1)
+            self.delete_select.callback = self._delete
+            self.add_item(self.delete_select)
+
+    async def _add(self, interaction: discord.Interaction):
+        # The modal replaces nothing yet — its submit handler edits this message.
+        await interaction.response.send_modal(CustomMapModal(self.lang, self.db_id))
+
+    async def _delete(self, interaction: discord.Interaction):
+        map_name = self.delete_select.values[0]
+        custom_layers.remove_custom_map(interaction.guild_id, map_name)
+        self.stop()  # retire this view; _render_custom_maps attaches a fresh one
+        await _render_custom_maps(interaction, self.db_id, self.lang,
+                                  notice=t("custom_map.deleted", self.lang,
+                                           map=map_name))
+
+    async def _back(self, interaction: discord.Interaction):
+        self.stop()  # retire this view; handle_admin_panel attaches a fresh one
+        await handle_admin_panel(interaction, self.db_id, edit=True)
+
+
+async def _render_custom_maps(interaction: discord.Interaction, db_id: int,
+                              lang: str, notice: str = ""):
+    """Draw (or redraw) the Custom Maps sub-panel over the current message."""
+    maps = db.get_custom_maps(interaction.guild_id)
+
+    if maps:
+        lines = [
+            "• **{}** — {}".format(
+                m["map_name"],
+                t("custom_map.layer_count", lang,
+                  count=len(m["payload"].get("layers") or [])))
+            for m in maps
+        ]
+        body = "\n".join(lines)
+    else:
+        body = t("custom_map.none", lang)
+
+    embed = discord.Embed(
+        title=t("custom_map.panel_title", lang),
+        description=f"{notice}\n\n{body}" if notice else body,
+        color=discord.Color.dark_red(),
+    )
+    view = CustomMapsView(lang, db_id, maps)
+    await interaction.response.edit_message(embed=embed, view=_bind(view, interaction))
+
+
+async def admin_custom_maps(interaction: discord.Interaction, db_id: int):
+    """Replace the Admin panel with the custom-maps sub-panel."""
+    settings = db.get_guild_settings(interaction.guild_id)
+    lang = settings.get("language", "en") if settings else "en"
+    await _render_custom_maps(interaction, db_id, lang)
+
+
 class AdminButton(ui.Button):
     def __init__(self, action: str, label: str, style: discord.ButtonStyle, emoji: str):
         # Custom_ids are scoped to the action only; the per-event db_id lives
@@ -2454,6 +2548,8 @@ class AdminButton(ui.Button):
             await admin_edit_event(interaction, db_id)
         elif self.action == "set_event_roles":
             await admin_set_event_roles(interaction, db_id)
+        elif self.action == "custom_maps":
+            await admin_custom_maps(interaction, db_id)
         elif self.action == "delete_event":
             await admin_delete_event(interaction, db_id)
 
