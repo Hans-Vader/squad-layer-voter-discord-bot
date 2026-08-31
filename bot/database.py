@@ -580,21 +580,6 @@ def get_map_sizes(allowed_sources: Optional[list[str]] = None) -> "dict[str, flo
     return {name: size for name, size in rows if size is not None}
 
 
-def get_unique_sources() -> list[str]:
-    """Return sorted list of distinct *fetched* source names in the cache.
-
-    Per-guild custom sources are excluded: they are never offered in a source
-    picker (an admin's own maps aren't a data set you opt into), and they are
-    appended automatically when an event's sources are resolved.
-    """
-    conn = _get_conn()
-    rows = conn.execute(
-        "SELECT DISTINCT source FROM layer_cache "
-        "WHERE source NOT LIKE ? ORDER BY source",
-        (f"{CUSTOM_SOURCE_PREFIX}%",),
-    ).fetchall()
-    conn.close()
-    return [r[0] for r in rows]
 
 
 def get_fetched_sources() -> list[str]:

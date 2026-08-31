@@ -52,10 +52,6 @@ def test_delete_custom_map_reports_whether_it_existed(temp_db):
     assert temp_db.delete_custom_map(1, "Belaya") is False
 
 
-def test_get_unique_sources_hides_custom(temp_db):
-    _seed_layer(temp_db, "AlBasrah_AAS_v1", "main", "Al Basrah", "AAS")
-    _seed_layer(temp_db, "Belaya_TC_v1", "custom:1", "Belaya", "TerritoryControl")
-    assert temp_db.get_unique_sources() == ["main"]
 
 
 def test_has_layers_for_source(temp_db):
