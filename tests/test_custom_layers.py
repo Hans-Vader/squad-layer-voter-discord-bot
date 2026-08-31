@@ -2,6 +2,7 @@
 
 import pytest
 
+import custom_layers as cl
 import database
 
 
@@ -96,3 +97,85 @@ def test_get_gamemode_samples_one_per_mode(temp_db):
     samples = dict(temp_db.get_gamemode_samples(["main"]))
     assert set(samples) == {"TerritoryControl", "AAS"}
     assert samples["TerritoryControl"].endswith("_TC_v1")
+
+
+BULLETED = """
+- Belaya_TC_v1
+- Belaya_Skirmish_v1
+- Belaya_RAAS_v1
+"""
+
+BARE = """Belaya_TC_v1
+
+Belaya_Skirmish_v1
+
+
+Belaya_RAAS_v1
+"""
+
+
+def test_both_input_formats_produce_the_same_result():
+    assert cl.parse_custom_layers(BULLETED) == cl.parse_custom_layers(BARE)
+
+
+def test_parses_map_mode_and_version():
+    map_name, layers = cl.parse_custom_layers("Belaya_TC_v1\nBelaya_Invasion_v2")
+    assert map_name == "Belaya"
+    assert layers[0] == {"raw_name": "Belaya_TC_v1",
+                         "gamemode_token": "TC", "layer_version": "v1"}
+    assert layers[1] == {"raw_name": "Belaya_Invasion_v2",
+                         "gamemode_token": "Invasion", "layer_version": "v2"}
+
+
+def test_gamemode_token_sits_in_front_of_the_version():
+    # AlBasrah_AAS_v3_CL — the trailing token must not be mistaken for the mode
+    assert cl.split_raw_name("AlBasrah_AAS_v3_CL") == ("AlBasrah", "AAS", "v3")
+
+
+def test_layer_without_a_version():
+    assert cl.split_raw_name("Belaya_RAAS") == ("Belaya", "RAAS", None)
+
+
+def test_duplicate_lines_collapse():
+    _, layers = cl.parse_custom_layers("Belaya_TC_v1\nBelaya_TC_v1")
+    assert len(layers) == 1
+
+
+def test_rejects_empty_input():
+    with pytest.raises(cl.CustomLayerError) as exc:
+        cl.parse_custom_layers("   \n\n  ")
+    assert exc.value.key == "custom_map.err_empty"
+
+
+def test_rejects_invalid_lines():
+    with pytest.raises(cl.CustomLayerError) as exc:
+        cl.parse_custom_layers("Belaya_TC_v1\nnot a layer name")
+    assert exc.value.key == "custom_map.err_invalid_lines"
+    assert "not a layer name" in exc.value.params["lines"]
+
+
+def test_rejects_layers_from_different_maps():
+    with pytest.raises(cl.CustomLayerError) as exc:
+        cl.parse_custom_layers("Belaya_TC_v1\nKokan_AAS_v1")
+    assert exc.value.key == "custom_map.err_mixed_maps"
+    assert "Belaya" in exc.value.params["maps"]
+    assert "Kokan" in exc.value.params["maps"]
+
+
+def test_map_token_comparison_ignores_case():
+    map_name, layers = cl.parse_custom_layers("Belaya_TC_v1\nbelaya_AAS_v1")
+    assert map_name == "Belaya"          # first spelling wins
+    assert len(layers) == 2
+
+
+def test_rejects_more_than_the_layer_cap():
+    text = "\n".join(f"Belaya_AAS_v{i}" for i in range(1, cl.MAX_LAYERS_PER_MAP + 2))
+    with pytest.raises(cl.CustomLayerError) as exc:
+        cl.parse_custom_layers(text)
+    assert exc.value.key == "custom_map.err_too_many"
+
+
+def test_normalize_map_name_falls_back_and_truncates():
+    assert cl.normalize_map_name("  Belaya Downs ", "Belaya") == "Belaya Downs"
+    assert cl.normalize_map_name("", "Belaya") == "Belaya"
+    assert len(cl.normalize_map_name("x" * 200, "Belaya")) == cl.MAX_MAP_NAME_LENGTH
