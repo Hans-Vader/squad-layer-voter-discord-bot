@@ -236,3 +236,124 @@ def test_inactive_gamemodes_empty_allowlist_means_no_warning():
     assert cl.inactive_gamemodes(
         [{"raw_name": "x_AAS_v1", "gamemode_token": "AAS", "layer_version": "v1"}],
         [], {}) == []
+
+
+REFERENCE = {
+    "USA": {"factionName": "United States Army",
+            "defaultUnit": "USA_LO_CombinedArms", "alliance": "BLUFOR"},
+    "RGF": {"factionName": "Russian Ground Forces",
+            "defaultUnit": "RGF_LO_CombinedArms", "alliance": "REDFOR"},
+}
+ALL_UNITS = ["CombinedArms", "Mechanized", "Motorized"]
+
+
+def _seed_reference_cache(db):
+    """Two main-source layers carrying the faction metadata custom maps borrow."""
+    factions = [
+        {"factionId": "USA", "factionName": "United States Army",
+         "defaultUnit": "USA_LO_CombinedArms", "alliance": "BLUFOR",
+         "availableOnTeams": [1, 2],
+         "unitTypes": [{"type": "CombinedArms", "name": "CombinedArms"},
+                       {"type": "Mechanized", "name": "Mechanized"}]},
+        {"factionId": "RGF", "factionName": "Russian Ground Forces",
+         "defaultUnit": "RGF_LO_CombinedArms", "alliance": "REDFOR",
+         "availableOnTeams": [1, 2],
+         "unitTypes": [{"type": "CombinedArms", "name": "CombinedArms"},
+                       {"type": "Motorized", "name": "Motorized"}]},
+    ]
+    _seed_layer(db, "AlBasrah_AAS_v1", "main", "Al Basrah", "AAS", factions=factions)
+    _seed_layer(db, "Anvil_TC_v1", "main", "Anvil", "TerritoryControl",
+                factions=factions)
+
+
+def test_build_custom_factions_empty_selection_means_everything():
+    out = cl.build_custom_factions([], [], REFERENCE, ALL_UNITS)
+    assert [f["factionId"] for f in out] == ["RGF", "USA"]      # sorted
+    assert [u["type"] for u in out[0]["unitTypes"]] == ALL_UNITS
+
+
+def test_build_custom_factions_is_a_cross_product():
+    out = cl.build_custom_factions(["USA"], ["Mechanized"], REFERENCE, ALL_UNITS)
+    assert len(out) == 1
+    assert out[0]["unitTypes"] == [{"type": "Mechanized", "name": "Mechanized"}]
+
+
+def test_build_custom_factions_borrows_metadata_and_spans_both_teams():
+    out = cl.build_custom_factions(["USA"], [], REFERENCE, ALL_UNITS)
+    assert out[0]["defaultUnit"] == "USA_LO_CombinedArms"
+    assert out[0]["alliance"] == "BLUFOR"
+    assert out[0]["factionName"] == "United States Army"
+    assert out[0]["availableOnTeams"] == [1, 2]
+
+
+def test_build_custom_factions_tolerates_an_unknown_faction():
+    out = cl.build_custom_factions(["MADEUP"], ["CombinedArms"], REFERENCE, ALL_UNITS)
+    assert out[0]["factionId"] == "MADEUP"
+    assert out[0]["defaultUnit"] == ""
+
+
+def test_save_materializes_into_the_cache(temp_db):
+    _seed_reference_cache(temp_db)
+    written = cl.save_custom_map(1, "Belaya",
+                                 ["Belaya_TC_v1", "Belaya_AAS_v1"], ["USA"], [])
+    assert written == 2
+
+    source = temp_db.custom_source(1)
+    assert temp_db.get_unique_maps(allowed_sources=[source]) == ["Belaya"]
+
+    layer = temp_db.get_layer_by_raw_name("Belaya_TC_v1", allowed_sources=[source])
+    assert layer["gamemode"] == "TerritoryControl"     # token translated
+    assert layer["layer_version"] == "v1"
+    assert [f["factionId"] for f in layer["factions"]] == ["USA"]
+    assert layer["team1_allowed_alliances"] == []
+
+
+def test_materialization_survives_a_cache_wipe(temp_db):
+    _seed_reference_cache(temp_db)
+    cl.save_custom_map(1, "Belaya", ["Belaya_TC_v1"], [], [])
+
+    temp_db.clear_layer_cache()
+    _seed_reference_cache(temp_db)                     # what a refresh restores
+    assert cl.materialize_custom_layers() == 1
+
+    source = temp_db.custom_source(1)
+    modes = temp_db.get_modes_for_map("Belaya", allowed_sources=[source])
+    assert [m["display"] for m in modes] == ["TerritoryControl v1"]
+
+
+def test_materialization_without_a_reference_source_is_a_no_op(temp_db):
+    temp_db.upsert_custom_map(1, "Belaya", {"layers": ["Belaya_TC_v1"],
+                                            "factions": [], "units": []})
+    assert cl.materialize_custom_layers() == 0
+
+
+def test_resaving_drops_layers_that_are_gone(temp_db):
+    _seed_reference_cache(temp_db)
+    cl.save_custom_map(1, "Belaya", ["Belaya_TC_v1", "Belaya_AAS_v1"], [], [])
+    cl.save_custom_map(1, "Belaya", ["Belaya_TC_v1"], [], [])
+
+    source = temp_db.custom_source(1)
+    assert temp_db.get_layer_by_raw_name("Belaya_AAS_v1",
+                                         allowed_sources=[source]) is None
+    assert temp_db.get_layer_by_raw_name("Belaya_TC_v1",
+                                         allowed_sources=[source]) is not None
+
+
+def test_remove_clears_both_the_definition_and_the_cache(temp_db):
+    _seed_reference_cache(temp_db)
+    cl.save_custom_map(1, "Belaya", ["Belaya_TC_v1"], [], [])
+
+    assert cl.remove_custom_map(1, "Belaya") is True
+    assert temp_db.get_custom_maps(1) == []
+    assert temp_db.get_unique_maps(allowed_sources=[temp_db.custom_source(1)]) == []
+    assert cl.remove_custom_map(1, "Belaya") is False
+
+
+def test_materialization_is_scoped_when_a_guild_is_given(temp_db):
+    _seed_reference_cache(temp_db)
+    temp_db.upsert_custom_map(1, "Belaya", {"layers": ["Belaya_TC_v1"],
+                                            "factions": [], "units": []})
+    temp_db.upsert_custom_map(2, "Kokan", {"layers": ["Kokan_TC_v1"],
+                                           "factions": [], "units": []})
+    assert cl.materialize_custom_layers(1) == 1
+    assert temp_db.has_layers_for_source(temp_db.custom_source(2)) is False

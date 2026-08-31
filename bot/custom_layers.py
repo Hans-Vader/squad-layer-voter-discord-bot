@@ -179,3 +179,106 @@ def inactive_gamemodes(layers: list[dict], allowed_gamemodes: list[str],
         if mode and mode not in allowed and mode not in out:
             out.append(mode)
     return out
+
+
+def build_custom_factions(faction_ids: list[str], unit_types: list[str],
+                          reference: dict, all_units: list[str]) -> list[dict]:
+    """Build the layer_cache `factions` structure for a custom map.
+
+    An empty selection means "everything the reference source knows". The
+    organizer picks one faction list and one unit list for the whole map — not
+    one per team, not one per faction — so this is a plain cross product and
+    every faction is available on both teams.
+
+    The borrowed `defaultUnit` is what makes vehicle info work:
+    bot._resolve_unit_object_key substitutes the chosen type token into that
+    object name and looks the result up in the reference source's Units block.
+    """
+    ids = list(faction_ids) if faction_ids else sorted(reference)
+    units = list(unit_types) if unit_types else list(all_units)
+    unit_entries = [{"type": u, "name": u} for u in units]
+
+    out = []
+    for fac_id in ids:
+        meta = reference.get(fac_id, {})
+        out.append({
+            "factionId": fac_id,
+            "factionName": meta.get("factionName", ""),
+            "defaultUnit": meta.get("defaultUnit", ""),
+            "availableOnTeams": [1, 2],
+            "unitTypes": list(unit_entries),
+            "alliance": meta.get("alliance", ""),
+        })
+    return out
+
+
+def materialize_custom_layers(guild_id: Optional[int] = None) -> int:
+    """Expand the stored custom maps into layer_cache rows. Returns rows written.
+
+    Idempotent — upsert_layer keys on (raw_name, source) — so it is safe to run
+    after a refresh, on boot and after every save. A no-op when no fetched
+    source is cached, since there would be no faction metadata to borrow.
+    """
+    entries = (db.get_custom_maps(guild_id) if guild_id is not None
+               else db.get_all_custom_maps())
+    if not entries:
+        return 0
+
+    source = resolve_reference_source()
+    if source is None:
+        logger.warning(
+            "No fetched layer source cached — %d custom map(s) not materialized",
+            len(entries))
+        return 0
+
+    reference = db.get_faction_reference([source])
+    all_units = db.get_unique_unit_types([source])
+    token_map = build_gamemode_token_map(source)
+
+    written = 0
+    for entry in entries:
+        payload = entry.get("payload") or {}
+        factions = build_custom_factions(payload.get("factions") or [],
+                                         payload.get("units") or [],
+                                         reference, all_units)
+        for raw_name in payload.get("layers") or []:
+            _, token, version = split_raw_name(raw_name)
+            db.upsert_layer(
+                raw_name=raw_name,
+                source=db.custom_source(entry["guild_id"]),
+                map_name=entry["map_name"],
+                map_id="",
+                gamemode=token_map.get(token, token),
+                layer_version=version,
+                factions=factions,
+                team1_alliances=[],
+                team2_alliances=[],
+                map_size_km=None,
+            )
+            written += 1
+    return written
+
+
+def save_custom_map(guild_id: int, map_name: str, raw_names: list[str],
+                    faction_ids: list[str], unit_types: list[str]) -> int:
+    """Store one custom map and materialize it. Returns layers written.
+
+    The cached rows are dropped first so a re-save that removes a layer doesn't
+    leave the old one behind — upsert alone would never delete it.
+    """
+    db.upsert_custom_map(guild_id, map_name, {
+        "layers": list(raw_names),
+        "factions": list(faction_ids),
+        "units": list(unit_types),
+    })
+    db.delete_layers(db.custom_source(guild_id), map_name)
+    # Materialization covers every map of the guild, so its row count would
+    # over-report this one. The caller wants this map's size.
+    materialize_custom_layers(guild_id)
+    return len(raw_names)
+
+
+def remove_custom_map(guild_id: int, map_name: str) -> bool:
+    """Delete a custom map and its materialized rows."""
+    db.delete_layers(db.custom_source(guild_id), map_name)
+    return db.delete_custom_map(guild_id, map_name)
