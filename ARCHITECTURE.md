@@ -187,8 +187,19 @@ source when it holds layers. There is deliberately no guild-blind variant:
 every caller has to say which of the two questions it is asking, because a
 guild-blind source list reached from guild-scoped code is what leaked one
 guild's custom rows into another's picker. `_resolve_event_sources` therefore
-has no special case for custom sources at all — the ordinary `allowed_sources`
-filter governs them.
+has no special case for custom sources at all — the event's own
+`allowed_sources` governs them.
+
+The guild defaults do **not** cap a running event. They seed the creation
+wizard through `_resolve_offered_sources` and stop there, which puts layer
+sources on the same footing as every other value in `EVENT_CONFIG_KEYS`.
+They used to be applied as a live cap inside `_resolve_event_sources`, so
+editing `/config_defaults` silently narrowed events already in flight — and
+because the custom source was appended *after* that cap, the inconsistency
+stayed invisible until custom sources became ordinary. One consequence to
+keep in mind: with the cap gone, `_resolve_event_sources` can return an empty
+list when the guild has no sources at all, and its callers must reject that
+rather than pass it on — an empty list downstream means *no source filter*.
 
 ### Configuration & i18n
 

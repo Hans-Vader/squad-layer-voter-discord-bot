@@ -93,7 +93,7 @@ Fields available in the dialog:
 | Suggestion duration | Default suggestion phase length |
 | Suggestion start offset | Default offset before suggestions open |
 
-> **Important:** changes made here apply only to **newly created events**. Existing events keep the snapshot they captured at creation and are not affected. The one exception is the **layer-source cap**: the bot applies that live across all events.
+> **Important:** changes made here apply only to **newly created events**. Existing events keep the settings they captured at creation and are not affected — layer sources included. To change a running event, use **Admin → Edit Event**.
 
 ### Running an Event
 
@@ -187,12 +187,11 @@ the panel says so under the list).
 **Custom Maps** is a layer source like any other. New events include it
 automatically — the creation wizard pre-selects every source it offers. An
 event created *before* your first custom map keeps the sources it was created
-with, so open **Edit Event → Allowed Layer Sources** once and tick it. If
-`/config_defaults` → **Layer Sources** has been narrowed to specific sources,
-allow Custom Maps there first — Edit Event only ever offers sources your
-server-wide default already permits, so a source excluded there won't show up
-to tick. To switch custom maps off for a whole event, or server-wide via
-`/config_defaults`, untick it there.
+with, so open **Edit Event → Allowed Layer Sources** once and tick it. That
+dialog offers every source your server has, whatever `/config_defaults` is set
+to — the defaults decide how the *next* event starts out, they never reach
+into an event already running. To switch custom maps off, untick them in
+**Edit Event** for that event, or in `/config_defaults` for future ones.
 
 To remove a single map, delete it in **Admin → Custom Maps**. **Edit Event →
 Blacklisted Maps** also hides one, but blacklisting matches a map *name*
