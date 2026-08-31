@@ -4559,8 +4559,13 @@ def _format_duration_seconds(seconds: int) -> str:
     return f"{s}s"
 
 
-def _format_property_value(value, kind: str) -> str:
-    """Compact one-line display of a property's current value."""
+def _format_property_value(value, kind: str, key: str = None, lang: str = "en") -> str:
+    """Compact one-line display of a property's current value.
+
+    `key`/`lang` matter only for the "list" kind: `allowed_sources` is the
+    one list property whose entries can be the internal `custom:<guild_id>`
+    name, so only that key's values are run through source_label().
+    """
     if kind == "string":
         if not value:
             return "—"
@@ -4569,8 +4574,9 @@ def _format_property_value(value, kind: str) -> str:
     if kind == "list":
         if not value:
             return "—"
-        joined = ", ".join(value[:5])
-        return joined + ("…" if len(value) > 5 else "")
+        display = [source_label(s, lang) for s in value] if key == "allowed_sources" else value
+        joined = ", ".join(display[:5])
+        return joined + ("…" if len(display) > 5 else "")
     if kind == "bool":
         return "✅" if value else "❌"
     if kind == "duration":
@@ -4806,7 +4812,7 @@ def _build_edit_main_embed(obj: dict, db_id, guild_id: int, lang: str,
     )
     for num, prop in enumerate(target.properties, 1):
         value = target.read(obj, prop)
-        formatted = _format_property_value(value, prop["kind"])
+        formatted = _format_property_value(value, prop["kind"], prop["key"], lang)
         embed.add_field(
             name=f"{num}. {t(prop['label_key'], lang)}",
             value=f"`{formatted}`",
@@ -5233,8 +5239,12 @@ class EditListView(ui.View):
         self.selected = set(selected)
         self.target = target
 
+        # Only allowed_sources choices can be the internal `custom:<guild_id>`
+        # name — other list properties (gamemodes, unit types, ...) pass
+        # through source_label() unchanged since it only rewrites that prefix.
         options = [
-            discord.SelectOption(label=c[:100], value=c, default=(c in self.selected))
+            discord.SelectOption(label=source_label(c, lang)[:100] if prop["key"] == "allowed_sources" else c[:100],
+                                 value=c, default=(c in self.selected))
             for c in choices
         ]
         select = ui.Select(
@@ -6293,7 +6303,7 @@ class EventCreateConfirmView(AutoDisableView):
         self.source_select: Optional[ui.Select] = None
         if len(offered_sources) > 1:
             options = [
-                discord.SelectOption(label=s, value=s, default=True)
+                discord.SelectOption(label=source_label(s, lang)[:100], value=s, default=True)
                 for s in offered_sources[:25]
             ]
             self.source_select = ui.Select(
@@ -6446,7 +6456,7 @@ async def _finalize_event_creation(interaction: discord.Interaction, settings: d
     await send_event_log(
         event_data, db_id,
         f"Event created in <#{interaction.channel_id}> by {interaction.user.display_name} "
-        f"(sources: {', '.join(allowed_sources)})",
+        f"(sources: {', '.join(source_label(s, lang) for s in allowed_sources)})",
         guild_id=interaction.guild_id,
         lang=lang,
     )
