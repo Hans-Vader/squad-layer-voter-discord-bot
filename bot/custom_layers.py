@@ -20,6 +20,10 @@ import logging
 import re
 from typing import Optional
 
+import database as db
+from config import LAYERS_JSON_SOURCES
+from utils import SQUADCALC_COMPATIBLE_SOURCE
+
 logger = logging.getLogger("layer_vote.custom")
 
 # One map's layers all land in the same mode dropdown, which is a Discord
@@ -122,3 +126,56 @@ def normalize_map_name(value: str, fallback: str) -> str:
     """Display name for the map: the admin's input, else the parsed token."""
     name = (value or "").strip()[:MAX_MAP_NAME_LENGTH]
     return name or fallback
+
+
+def resolve_reference_source() -> Optional[str]:
+    """The cached source whose faction and unit data custom layers borrow.
+
+    Prefers the SquadCalc-compatible main-game source, then the first
+    configured source that is actually cached, then whatever is there. Returns
+    None when no fetched layers are cached at all — custom layers cannot be
+    materialized in that state, since there is no faction metadata to copy.
+    """
+    cached = db.get_unique_sources()  # already excludes custom:* sources
+    if SQUADCALC_COMPATIBLE_SOURCE in cached:
+        return SQUADCALC_COMPATIBLE_SOURCE
+    for name, _url in LAYERS_JSON_SOURCES:
+        if name in cached:
+            return name
+    return cached[0] if cached else None
+
+
+def build_gamemode_token_map(source: str) -> dict[str, str]:
+    """{raw-name token: canonical gamemode}, derived from the cache.
+
+    layer_cache stores "TerritoryControl" while raw names say "TC", so a typed
+    token has to be translated before it can be matched against
+    allowed_gamemodes. Deriving the map from the data keeps this correct when
+    upstream renames a mode, and needs no hardcoded table.
+    """
+    mapping: dict[str, str] = {}
+    for gamemode, raw_name in db.get_gamemode_samples([source]):
+        _, token, _ = split_raw_name(raw_name)
+        if token:
+            mapping.setdefault(token, gamemode)
+    return mapping
+
+
+def inactive_gamemodes(layers: list[dict], allowed_gamemodes: list[str],
+                       token_map: dict[str, str]) -> list[str]:
+    """Canonical gamemodes among these layers that the guild has switched off.
+
+    Custom layers pass through the normal gamemode filter, so a mode the guild
+    doesn't allow silently never reaches a dropdown. The save confirmation says
+    so out loud instead.
+    """
+    allowed = set(allowed_gamemodes or [])
+    if not allowed:
+        return []
+    out: list[str] = []
+    for layer in layers:
+        token = layer.get("gamemode_token", "")
+        mode = token_map.get(token, token)
+        if mode and mode not in allowed and mode not in out:
+            out.append(mode)
+    return out

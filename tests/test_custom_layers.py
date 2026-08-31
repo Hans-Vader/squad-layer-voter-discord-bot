@@ -193,3 +193,46 @@ def test_rejects_a_layer_with_no_gamemode_token():
         cl.parse_custom_layers("Belaya_v1")
     assert exc.value.key == "custom_map.err_invalid_lines"
     assert "Belaya_v1" in exc.value.params["lines"]
+
+
+def test_resolve_reference_source_prefers_main(temp_db):
+    _seed_layer(temp_db, "AlBasrah_AAS_v1", "main", "Al Basrah", "AAS")
+    _seed_layer(temp_db, "Sanxian_AAS_v1", "supermod", "Sanxian", "AAS")
+    assert cl.resolve_reference_source() == "main"
+
+
+def test_resolve_reference_source_falls_back_to_any_cached_source(temp_db):
+    _seed_layer(temp_db, "Sanxian_AAS_v1", "supermod", "Sanxian", "AAS")
+    assert cl.resolve_reference_source() == "supermod"
+
+
+def test_resolve_reference_source_ignores_custom_sources(temp_db):
+    _seed_layer(temp_db, "Belaya_TC_v1", "custom:1", "Belaya", "TerritoryControl")
+    assert cl.resolve_reference_source() is None
+
+
+def test_gamemode_token_map_is_derived_from_the_cache(temp_db):
+    _seed_layer(temp_db, "Anvil_TC_v1", "main", "Anvil", "TerritoryControl")
+    _seed_layer(temp_db, "AlBasrah_AAS_v1", "main", "Al Basrah", "AAS")
+
+    token_map = cl.build_gamemode_token_map("main")
+    assert token_map["TC"] == "TerritoryControl"
+    assert token_map["AAS"] == "AAS"
+
+
+def test_inactive_gamemodes_lists_modes_the_guild_switched_off():
+    token_map = {"TC": "TerritoryControl", "AAS": "AAS"}
+    layers = [
+        {"raw_name": "Belaya_TC_v1", "gamemode_token": "TC", "layer_version": "v1"},
+        {"raw_name": "Belaya_AAS_v1", "gamemode_token": "AAS", "layer_version": "v1"},
+        {"raw_name": "Belaya_Skirmish_v1", "gamemode_token": "Skirmish",
+         "layer_version": "v1"},
+    ]
+    assert cl.inactive_gamemodes(layers, ["AAS", "RAAS"], token_map) == [
+        "TerritoryControl", "Skirmish"]
+
+
+def test_inactive_gamemodes_empty_allowlist_means_no_warning():
+    assert cl.inactive_gamemodes(
+        [{"raw_name": "x_AAS_v1", "gamemode_token": "AAS", "layer_version": "v1"}],
+        [], {}) == []
