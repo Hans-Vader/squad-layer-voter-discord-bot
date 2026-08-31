@@ -52,12 +52,6 @@ def test_delete_custom_map_reports_whether_it_existed(temp_db):
     assert temp_db.delete_custom_map(1, "Belaya") is False
 
 
-def test_get_unique_sources_hides_custom(temp_db):
-    _seed_layer(temp_db, "AlBasrah_AAS_v1", "main", "Al Basrah", "AAS")
-    _seed_layer(temp_db, "Belaya_TC_v1", "custom:1", "Belaya", "TerritoryControl")
-    assert temp_db.get_unique_sources() == ["main"]
-
-
 def test_has_layers_for_source(temp_db):
     _seed_layer(temp_db, "Belaya_TC_v1", "custom:1", "Belaya", "TerritoryControl")
     assert temp_db.has_layers_for_source("custom:1") is True
@@ -382,26 +376,22 @@ def test_source_label_hides_the_internal_custom_name():
     assert utils.source_label("custom:123456789", "en") != "custom:123456789"
 
 
-def test_event_sources_append_the_guilds_custom_source(temp_db):
+def test_event_sources_no_longer_append_the_custom_source(temp_db):
+    # The custom source is an ordinary source now: an event that did not
+    # select it does not get it, even though the guild has custom layers.
     import bot as botmod
     _seed_reference_cache(temp_db)
     cl.save_custom_map(1, "Belaya", ["Belaya_TC_v1"], [], [])
-
-    sources = botmod._resolve_event_sources({"allowed_sources": ["main"]}, {}, 1)
-    assert sources == ["main", "custom:1"]
-
-
-def test_event_sources_skip_a_custom_source_with_no_layers(temp_db):
-    import bot as botmod
-    _seed_reference_cache(temp_db)
-    assert botmod._resolve_event_sources({"allowed_sources": ["main"]}, {}, 1) == ["main"]
+    assert botmod._resolve_event_sources(
+        {"allowed_sources": ["main"]}, {}, 1) == ["main"]
 
 
-def test_event_sources_without_a_guild_id_are_unchanged(temp_db):
+def test_event_sources_include_the_custom_source_when_selected(temp_db):
     import bot as botmod
     _seed_reference_cache(temp_db)
     cl.save_custom_map(1, "Belaya", ["Belaya_TC_v1"], [], [])
-    assert botmod._resolve_event_sources({"allowed_sources": ["main"]}, {}) == ["main"]
+    assert botmod._resolve_event_sources(
+        {"allowed_sources": ["main", "custom:1"]}, {}, 1) == ["main", "custom:1"]
 
 
 def test_units_source_redirects_custom_to_the_reference(temp_db):
@@ -414,11 +404,24 @@ def test_units_source_redirects_custom_to_the_reference(temp_db):
 def test_event_sources_never_resolve_to_an_unfiltered_list(temp_db):
     import bot as botmod
     _seed_reference_cache(temp_db)
+    cl.save_custom_map(1, "Belaya", ["Belaya_TC_v1"], [], [])
     # Event pinned to a source the guild cap no longer allows: the intersection
     # is empty, and an empty list downstream means "no filter" — which would
-    # expose every guild's custom rows.
+    # expose every guild's custom rows. The fallback is everything this guild
+    # has, custom source included.
     assert botmod._resolve_event_sources(
-        {"allowed_sources": ["gone"]}, {"allowed_sources": ["main"]}) == ["main"]
+        {"allowed_sources": ["gone"]}, {"allowed_sources": ["main"]}, 1) == [
+            "main", "custom:1"]
+
+
+def test_offered_sources_include_the_guilds_custom_source(temp_db):
+    import bot as botmod
+    _seed_reference_cache(temp_db)
+    cl.save_custom_map(1, "Belaya", ["Belaya_TC_v1"], [], [])
+    assert botmod._resolve_offered_sources({}, 1) == ["main", "custom:1"]
+    # ...and the guild default still caps it.
+    assert botmod._resolve_offered_sources(
+        {"allowed_sources": ["main"]}, 1) == ["main"]
 
 
 def test_save_only_materializes_the_map_being_saved(temp_db):
@@ -431,3 +434,109 @@ def test_save_only_materializes_the_map_being_saved(temp_db):
     assert cl.save_custom_map(1, "Kokan", ["Kokan_AAS_v1"], [], []) == 1
     # Saving Kokan must not have touched Belaya's rows either way.
     assert temp_db.count_layers(source, "Belaya") == 0
+
+
+def test_get_fetched_sources_excludes_custom(temp_db):
+    _seed_layer(temp_db, "AlBasrah_AAS_v1", "main", "Al Basrah", "AAS")
+    _seed_layer(temp_db, "Belaya_TC_v1", "custom:1", "Belaya", "TerritoryControl")
+    assert temp_db.get_fetched_sources() == ["main"]
+
+
+def test_guild_sources_append_only_the_guilds_own(temp_db):
+    _seed_layer(temp_db, "AlBasrah_AAS_v1", "main", "Al Basrah", "AAS")
+    _seed_layer(temp_db, "Belaya_TC_v1", "custom:1", "Belaya", "TerritoryControl")
+    _seed_layer(temp_db, "Kokan_TC_v1", "custom:2", "Kokan", "TerritoryControl")
+    assert temp_db.get_guild_sources(1) == ["main", "custom:1"]
+    assert temp_db.get_guild_sources(2) == ["main", "custom:2"]
+
+
+def test_guild_sources_omit_a_custom_source_with_no_layers(temp_db):
+    _seed_layer(temp_db, "AlBasrah_AAS_v1", "main", "Al Basrah", "AAS")
+    assert temp_db.get_guild_sources(1) == ["main"]
+
+
+def test_guild_sources_put_the_custom_source_last(temp_db):
+    # Fetched sources sort alphabetically; the guild's own always comes last,
+    # so a picker's order is stable and the custom entry reads as distinct.
+    _seed_layer(temp_db, "zulu_AAS_v1", "zulu", "Zulu", "AAS")
+    _seed_layer(temp_db, "alpha_AAS_v1", "alpha", "Alpha", "AAS")
+    _seed_layer(temp_db, "Belaya_TC_v1", "custom:1", "Belaya", "TerritoryControl")
+    assert temp_db.get_guild_sources(1) == ["alpha", "zulu", "custom:1"]
+
+
+def test_every_edit_property_source_takes_a_guild_id(temp_db):
+    # A uniform Callable[[int], list[str]] is what lets a future change make
+    # any of these guild-aware without another signature migration.
+    import bot as botmod
+    _seed_reference_cache(temp_db)
+    tables = botmod._EDIT_PROPERTIES + botmod._GUILD_EDIT_PROPERTIES
+    callables = [p["source"] for p in tables if p.get("source")]
+    assert callables, "expected the property tables to carry source callables"
+    for fn in callables:
+        assert isinstance(fn(1), list)
+
+
+def test_allowed_sources_property_offers_the_custom_source(temp_db):
+    import bot as botmod
+    _seed_reference_cache(temp_db)
+    cl.save_custom_map(1, "Belaya", ["Belaya_TC_v1"], [], [])
+    for table in (botmod._EDIT_PROPERTIES, botmod._GUILD_EDIT_PROPERTIES):
+        prop = next(p for p in table if p["key"] == "allowed_sources")
+        assert prop["source"](1) == ["main", "custom:1"]
+
+
+def test_event_allowed_sources_choices_honour_the_guild_cap(temp_db):
+    # A guild that capped /config_defaults -> Layer Sources to ["main"] must
+    # not have Custom Maps offered in Edit Event -> Allowed Layer Sources:
+    # ticking an option the cap immediately strips back out is a silent
+    # no-op for the admin. _resolve_offered_sources is the same guild-sources
+    # ∩ guild-default intersection used to build the creation wizard's list.
+    import bot as botmod
+    _seed_reference_cache(temp_db)
+    cl.save_custom_map(1, "Belaya", ["Belaya_TC_v1"], [], [])
+    temp_db.save_guild_settings(1, {"allowed_sources": ["main"]})
+
+    prop = next(p for p in botmod._EDIT_PROPERTIES if p["key"] == "allowed_sources")
+    assert prop["source"](1) == ["main"]
+
+
+def test_guild_allowed_sources_choices_are_not_capped_by_themselves(temp_db):
+    # The guild-level allowed_sources entry (/config_defaults) IS the cap, so
+    # its own choice list must stay uncapped -- otherwise a source disabled
+    # there could never be re-enabled again.
+    import bot as botmod
+    _seed_reference_cache(temp_db)
+    cl.save_custom_map(1, "Belaya", ["Belaya_TC_v1"], [], [])
+    temp_db.save_guild_settings(1, {"allowed_sources": ["main"]})
+
+    prop = next(p for p in botmod._GUILD_EDIT_PROPERTIES if p["key"] == "allowed_sources")
+    assert prop["source"](1) == ["main", "custom:1"]
+
+
+def test_colliding_map_name_flags_a_prefix_in_either_direction(temp_db):
+    # The blacklist filter matches by case-insensitive prefix across every
+    # source, so either direction of prefix means both maps would be hidden.
+    _seed_layer(temp_db, "BelayaDowns_AAS_v1", "main", "Belaya Downs", "AAS")
+    assert cl.colliding_map_name("Belaya") == "Belaya Downs"
+    assert cl.colliding_map_name("belaya downs extra") == "Belaya Downs"
+    assert cl.colliding_map_name("Kokan") is None
+
+
+def test_colliding_map_name_ignores_custom_maps(temp_db):
+    # Re-using an existing custom map's name is the documented way to replace
+    # it, so only fetched sources are compared against.
+    _seed_layer(temp_db, "AlBasrah_AAS_v1", "main", "Al Basrah", "AAS")
+    _seed_layer(temp_db, "Belaya_TC_v1", "custom:1", "Belaya", "TerritoryControl")
+    assert cl.colliding_map_name("Belaya") is None
+
+
+def test_colliding_map_name_is_none_when_nothing_was_fetched(temp_db):
+    # get_unique_maps(allowed_sources=[]) means "no filter", which would
+    # compare against every guild's custom rows. The empty case is guarded.
+    _seed_layer(temp_db, "Belaya_TC_v1", "custom:1", "Belaya", "TerritoryControl")
+    assert cl.colliding_map_name("Belaya") is None
+
+
+def test_colliding_map_name_tolerates_blank_input(temp_db):
+    _seed_layer(temp_db, "AlBasrah_AAS_v1", "main", "Al Basrah", "AAS")
+    assert cl.colliding_map_name("   ") is None

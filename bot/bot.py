@@ -1234,7 +1234,7 @@ def _state_event_settings(state: "SuggestState") -> dict:
     return _event_settings(record["event"] if record else {}, settings)
 
 
-def _resolve_event_sources(event: dict, settings: dict, guild_id: int = 0) -> list[str]:
+def _resolve_event_sources(event: dict, settings: dict, guild_id: int) -> list[str]:
     """Return the list of source names a user may pick from for this event.
 
     The event's stored `allowed_sources` (chosen by the admin at creation time)
@@ -1244,25 +1244,17 @@ def _resolve_event_sources(event: dict, settings: dict, guild_id: int = 0) -> li
     immediately for already-active events, instead of being frozen at the
     moment the event was created.
 
-    Falls back to all distinct sources currently in the cache when the event
-    has no explicit selection (legacy events that predate this feature).
+    A guild's own custom source is an ordinary source here: the creation
+    wizard offers it, the cap can switch it off, and an event created before
+    the guild's first custom map simply does not list it until someone edits
+    that event's sources.
 
-    The guild's own custom source is appended last, whenever it actually holds
-    layers. Custom maps are never offered in a source picker, so an event that
-    stored an explicit selection would otherwise never see a map the organizer
-    added afterwards. The `has_layers_for_source` gate keeps guilds without
-    custom maps from gaining a pointless source-picker step.
-
-    The custom source is appended after the guild-level cap is applied, so the
-    Allowed Layer Sources property can never exclude a guild's own custom
-    maps — a guild's own maps are not a data set to opt out of; Edit Event →
-    Blacklisted Maps is the tool for hiding one. (The guild-default
-    blacklist picker in /config_defaults cannot do this: it is scoped by
-    _resolve_offered_sources, which is built on get_unique_sources() and so
-    never includes a custom source.)
+    Falls back to everything this guild has when the event carries no explicit
+    selection (legacy events), and again when the cap filters that selection
+    down to nothing.
     """
     explicit = event.get("allowed_sources") or []
-    candidate = list(explicit) if explicit else db.get_unique_sources()
+    candidate = list(explicit) if explicit else db.get_guild_sources(guild_id)
 
     guild_allowed = settings.get("allowed_sources") or []
     if guild_allowed:
@@ -1271,16 +1263,9 @@ def _resolve_event_sources(event: dict, settings: dict, guild_id: int = 0) -> li
     # An empty list must never reach the caller: both callers treat "no
     # sources resolved" as state.source = "", which downstream means *no
     # source filter at all* (get_unique_maps(allowed_sources=None)) — i.e.
-    # every guild's custom rows become visible. Fall back to the unfiltered
-    # source list, which is the pre-feature meaning of "no filter" and never
-    # includes a custom source.
+    # every guild's custom rows become visible.
     if not candidate:
-        candidate = db.get_unique_sources()
-
-    if guild_id:
-        custom = db.custom_source(guild_id)
-        if custom not in candidate and db.has_layers_for_source(custom):
-            candidate.append(custom)
+        candidate = db.get_guild_sources(guild_id)
 
     return candidate
 
@@ -2634,6 +2619,16 @@ class CustomMapModal(ui.Modal):
 
         map_name = custom_layers.normalize_map_name(
             str(self.name_input.value), map_token)
+
+        clash = custom_layers.colliding_map_name(map_name)
+        if clash:
+            await interaction.response.send_message(
+                embed=discord.Embed(
+                    description=t("custom_map.err_name_collision",
+                                  self.lang, map=clash),
+                    color=discord.Color.red()),
+                ephemeral=True)
+            return
 
         view = CustomMapDetailsView(self.lang, self.db_id, map_name, layers,
                                     faction_ids, unit_types)
@@ -4564,8 +4559,13 @@ def _format_duration_seconds(seconds: int) -> str:
     return f"{s}s"
 
 
-def _format_property_value(value, kind: str) -> str:
-    """Compact one-line display of a property's current value."""
+def _format_property_value(value, kind: str, key: str = None, lang: str = "en") -> str:
+    """Compact one-line display of a property's current value.
+
+    `key`/`lang` matter only for the "list" kind: `allowed_sources` is the
+    one list property whose entries can be the internal `custom:<guild_id>`
+    name, so only that key's values are run through source_label().
+    """
     if kind == "string":
         if not value:
             return "—"
@@ -4574,8 +4574,9 @@ def _format_property_value(value, kind: str) -> str:
     if kind == "list":
         if not value:
             return "—"
-        joined = ", ".join(value[:5])
-        return joined + ("…" if len(value) > 5 else "")
+        display = [source_label(s, lang) for s in value] if key == "allowed_sources" else value
+        joined = ", ".join(display[:5])
+        return joined + ("…" if len(display) > 5 else "")
     if kind == "bool":
         return "✅" if value else "❌"
     if kind == "duration":
@@ -4622,15 +4623,15 @@ def _write_event_property(event: dict, key: str, target: str, value) -> None:
 # returning the available choices for "list" kinds.
 _EDIT_PROPERTIES: list[dict] = [
     {"key": "event_name",                "label_key": "edit.prop.event_name",            "kind": "string",   "target": "event"},
-    {"key": "allowed_gamemodes",         "label_key": "edit.prop.allowed_gamemodes",     "kind": "list",     "target": "config", "source": db.get_unique_gamemodes},
-    {"key": "blacklisted_maps",          "label_key": "edit.prop.blacklisted_maps",      "kind": "list",     "target": "config", "source": db.get_unique_maps},
-    {"key": "blacklisted_factions",      "label_key": "edit.prop.blacklisted_factions",  "kind": "list",     "target": "config", "source": db.get_unique_factions},
-    {"key": "blacklisted_units",         "label_key": "edit.prop.blacklisted_units",     "kind": "list",     "target": "config", "source": db.get_unique_unit_types},
+    {"key": "allowed_gamemodes",         "label_key": "edit.prop.allowed_gamemodes",     "kind": "list",     "target": "config", "source": lambda gid: db.get_unique_gamemodes()},
+    {"key": "blacklisted_maps",          "label_key": "edit.prop.blacklisted_maps",      "kind": "list",     "target": "config", "source": lambda gid: db.get_unique_maps()},
+    {"key": "blacklisted_factions",      "label_key": "edit.prop.blacklisted_factions",  "kind": "list",     "target": "config", "source": lambda gid: db.get_unique_factions()},
+    {"key": "blacklisted_units",         "label_key": "edit.prop.blacklisted_units",     "kind": "list",     "target": "config", "source": lambda gid: db.get_unique_unit_types()},
     {"key": "max_suggestions_per_user",  "label_key": "edit.prop.max_per_user",          "kind": "int",      "target": "config", "min": 1,  "max": 10},
     {"key": "max_total_suggestions",     "label_key": "edit.prop.max_total",             "kind": "int",      "target": "config", "min": 1,  "max": 25},
     {"key": "max_self_removals_per_user","label_key": "edit.prop.max_self_removals",     "kind": "int",      "target": "config", "min": 0,  "max": 10},
     {"key": "history_lookback_events",   "label_key": "edit.prop.history_lookback",      "kind": "int",      "target": "config", "min": 0,  "max": 50},
-    {"key": "allowed_sources",           "label_key": "edit.prop.allowed_sources",       "kind": "list",     "target": "event",  "source": db.get_unique_sources},
+    {"key": "allowed_sources",           "label_key": "edit.prop.allowed_sources",       "kind": "list",     "target": "event",  "source": lambda gid: _resolve_offered_sources(db.get_guild_settings(gid) or {}, gid)},
     {"key": "voting_duration_hours",     "label_key": "edit.prop.voting_duration",       "kind": "vote_duration", "target": "event"},
     {"key": "max_voting_layers",         "label_key": "edit.prop.max_voting_layers",     "kind": "int",      "target": "event",  "min": 1,  "max": 10},
     {"key": "allow_multiple_votes",      "label_key": "edit.prop.allow_multiple_votes",  "kind": "bool",     "target": "event"},
@@ -4644,15 +4645,15 @@ _EDIT_PROPERTIES: list[dict] = [
 # the flat guild settings dict. event_name is omitted (no guild meaning); the
 # default_* keys map the per-event concepts to their guild-default storage.
 _GUILD_EDIT_PROPERTIES: list[dict] = [
-    {"key": "allowed_gamemodes",          "label_key": "edit.prop.allowed_gamemodes",          "kind": "list",          "source": db.get_unique_gamemodes},
-    {"key": "blacklisted_maps",           "label_key": "edit.prop.blacklisted_maps",           "kind": "list",          "source": db.get_unique_maps},
-    {"key": "blacklisted_factions",       "label_key": "edit.prop.blacklisted_factions",       "kind": "list",          "source": db.get_unique_factions},
-    {"key": "blacklisted_units",          "label_key": "edit.prop.blacklisted_units",          "kind": "list",          "source": db.get_unique_unit_types},
+    {"key": "allowed_gamemodes",          "label_key": "edit.prop.allowed_gamemodes",          "kind": "list",          "source": lambda gid: db.get_unique_gamemodes()},
+    {"key": "blacklisted_maps",           "label_key": "edit.prop.blacklisted_maps",           "kind": "list",          "source": lambda gid: db.get_unique_maps()},
+    {"key": "blacklisted_factions",       "label_key": "edit.prop.blacklisted_factions",       "kind": "list",          "source": lambda gid: db.get_unique_factions()},
+    {"key": "blacklisted_units",          "label_key": "edit.prop.blacklisted_units",          "kind": "list",          "source": lambda gid: db.get_unique_unit_types()},
     {"key": "max_suggestions_per_user",   "label_key": "edit.prop.max_per_user",               "kind": "int",           "min": 1, "max": 10},
     {"key": "max_total_suggestions",      "label_key": "edit.prop.max_total",                  "kind": "int",           "min": 1, "max": 25},
     {"key": "max_self_removals_per_user", "label_key": "edit.prop.max_self_removals",          "kind": "int",           "min": 0, "max": 10},
     {"key": "history_lookback_events",    "label_key": "edit.prop.history_lookback",           "kind": "int",           "min": 0, "max": 50},
-    {"key": "allowed_sources",            "label_key": "edit.prop.allowed_sources",            "kind": "list",          "source": db.get_unique_sources},
+    {"key": "allowed_sources",            "label_key": "edit.prop.allowed_sources",            "kind": "list",          "source": lambda gid: db.get_guild_sources(gid)},
     {"key": "default_voting_duration_hours",  "label_key": "config_defaults.prop.voting_duration",      "kind": "vote_duration"},
     {"key": "default_max_voting_layers",  "label_key": "config_defaults.prop.max_voting_layers",        "kind": "int", "min": 1, "max": 10},
     {"key": "default_allow_multiple_votes",   "label_key": "config_defaults.prop.allow_multiple_votes", "kind": "bool"},
@@ -4793,7 +4794,7 @@ class GuildEditTarget(EditTarget):
         return f"{t('config_defaults.dm_intro', lang)}\n{t('edit.select_property', lang)}"
 
     def scope_sources(self, obj, guild_id):
-        return _resolve_offered_sources(obj)
+        return _resolve_offered_sources(obj, guild_id)
 
 
 _EVENT_TARGET = EventEditTarget()
@@ -4811,7 +4812,7 @@ def _build_edit_main_embed(obj: dict, db_id, guild_id: int, lang: str,
     )
     for num, prop in enumerate(target.properties, 1):
         value = target.read(obj, prop)
-        formatted = _format_property_value(value, prop["kind"])
+        formatted = _format_property_value(value, prop["kind"], prop["key"], lang)
         embed.add_field(
             name=f"{num}. {t(prop['label_key'], lang)}",
             value=f"`{formatted}`",
@@ -5143,7 +5144,10 @@ async def _show_property_editor(interaction: discord.Interaction, user_id: int,
                 interaction, user_id, db_id, guild_id, lang, prop, obj, target=target)
             return
 
-        choices = prop["source"]() if prop.get("source") else []
+        # Every `source` callable takes the guild id, even the ones that do not
+        # vary by guild yet. A uniform contract is what keeps a guild-blind
+        # query from quietly becoming reachable from guild-scoped code.
+        choices = prop["source"](guild_id) if prop.get("source") else []
         if not choices:
             fallback_view = EditMainView(user_id, db_id, guild_id, lang, target=target)
             _set_active_view(user_id, fallback_view)
@@ -5235,8 +5239,12 @@ class EditListView(ui.View):
         self.selected = set(selected)
         self.target = target
 
+        # Only allowed_sources choices can be the internal `custom:<guild_id>`
+        # name — other list properties (gamemodes, unit types, ...) pass
+        # through source_label() unchanged since it only rewrites that prefix.
         options = [
-            discord.SelectOption(label=c[:100], value=c, default=(c in self.selected))
+            discord.SelectOption(label=source_label(c, lang)[:100] if prop["key"] == "allowed_sources" else c[:100],
+                                 value=c, default=(c in self.selected))
             for c in choices
         ]
         select = ui.Select(
@@ -6134,7 +6142,7 @@ async def cmd_create_event(interaction: discord.Interaction):
 
     # Resolve which sources will be offered. Same logic as before — the
     # universe of cache sources, intersected with the guild's allowed list.
-    offered = _resolve_offered_sources(settings)
+    offered = _resolve_offered_sources(settings, interaction.guild_id)
     if not offered:
         await interaction.response.send_message(t("cache.empty", lang), ephemeral=True)
         return
@@ -6142,13 +6150,13 @@ async def cmd_create_event(interaction: discord.Interaction):
     await interaction.response.send_modal(EventScheduleModal(settings, lang, offered))
 
 
-def _resolve_offered_sources(settings: dict) -> list[str]:
-    """Sources to expose to event creators: cache ∩ guild default (or all if no default)."""
-    cache_sources = db.get_unique_sources()
+def _resolve_offered_sources(settings: dict, guild_id: int) -> list[str]:
+    """Sources to expose to event creators: this guild's sources ∩ guild default."""
+    guild_sources = db.get_guild_sources(guild_id)
     guild_default = settings.get("allowed_sources") or []
     if guild_default:
-        return [s for s in cache_sources if s in guild_default]
-    return list(cache_sources)
+        return [s for s in guild_sources if s in guild_default]
+    return guild_sources
 
 
 class EventScheduleModal(ui.Modal):
@@ -6295,7 +6303,7 @@ class EventCreateConfirmView(AutoDisableView):
         self.source_select: Optional[ui.Select] = None
         if len(offered_sources) > 1:
             options = [
-                discord.SelectOption(label=s, value=s, default=True)
+                discord.SelectOption(label=source_label(s, lang)[:100], value=s, default=True)
                 for s in offered_sources[:25]
             ]
             self.source_select = ui.Select(
@@ -6448,7 +6456,7 @@ async def _finalize_event_creation(interaction: discord.Interaction, settings: d
     await send_event_log(
         event_data, db_id,
         f"Event created in <#{interaction.channel_id}> by {interaction.user.display_name} "
-        f"(sources: {', '.join(allowed_sources)})",
+        f"(sources: {', '.join(source_label(s, lang) for s in allowed_sources)})",
         guild_id=interaction.guild_id,
         lang=lang,
     )
