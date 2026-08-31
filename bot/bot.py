@@ -4607,15 +4607,15 @@ def _write_event_property(event: dict, key: str, target: str, value) -> None:
 # returning the available choices for "list" kinds.
 _EDIT_PROPERTIES: list[dict] = [
     {"key": "event_name",                "label_key": "edit.prop.event_name",            "kind": "string",   "target": "event"},
-    {"key": "allowed_gamemodes",         "label_key": "edit.prop.allowed_gamemodes",     "kind": "list",     "target": "config", "source": db.get_unique_gamemodes},
-    {"key": "blacklisted_maps",          "label_key": "edit.prop.blacklisted_maps",      "kind": "list",     "target": "config", "source": db.get_unique_maps},
-    {"key": "blacklisted_factions",      "label_key": "edit.prop.blacklisted_factions",  "kind": "list",     "target": "config", "source": db.get_unique_factions},
-    {"key": "blacklisted_units",         "label_key": "edit.prop.blacklisted_units",     "kind": "list",     "target": "config", "source": db.get_unique_unit_types},
+    {"key": "allowed_gamemodes",         "label_key": "edit.prop.allowed_gamemodes",     "kind": "list",     "target": "config", "source": lambda gid: db.get_unique_gamemodes()},
+    {"key": "blacklisted_maps",          "label_key": "edit.prop.blacklisted_maps",      "kind": "list",     "target": "config", "source": lambda gid: db.get_unique_maps()},
+    {"key": "blacklisted_factions",      "label_key": "edit.prop.blacklisted_factions",  "kind": "list",     "target": "config", "source": lambda gid: db.get_unique_factions()},
+    {"key": "blacklisted_units",         "label_key": "edit.prop.blacklisted_units",     "kind": "list",     "target": "config", "source": lambda gid: db.get_unique_unit_types()},
     {"key": "max_suggestions_per_user",  "label_key": "edit.prop.max_per_user",          "kind": "int",      "target": "config", "min": 1,  "max": 10},
     {"key": "max_total_suggestions",     "label_key": "edit.prop.max_total",             "kind": "int",      "target": "config", "min": 1,  "max": 25},
     {"key": "max_self_removals_per_user","label_key": "edit.prop.max_self_removals",     "kind": "int",      "target": "config", "min": 0,  "max": 10},
     {"key": "history_lookback_events",   "label_key": "edit.prop.history_lookback",      "kind": "int",      "target": "config", "min": 0,  "max": 50},
-    {"key": "allowed_sources",           "label_key": "edit.prop.allowed_sources",       "kind": "list",     "target": "event",  "source": db.get_unique_sources},
+    {"key": "allowed_sources",           "label_key": "edit.prop.allowed_sources",       "kind": "list",     "target": "event",  "source": lambda gid: db.get_guild_sources(gid)},
     {"key": "voting_duration_hours",     "label_key": "edit.prop.voting_duration",       "kind": "vote_duration", "target": "event"},
     {"key": "max_voting_layers",         "label_key": "edit.prop.max_voting_layers",     "kind": "int",      "target": "event",  "min": 1,  "max": 10},
     {"key": "allow_multiple_votes",      "label_key": "edit.prop.allow_multiple_votes",  "kind": "bool",     "target": "event"},
@@ -4629,15 +4629,15 @@ _EDIT_PROPERTIES: list[dict] = [
 # the flat guild settings dict. event_name is omitted (no guild meaning); the
 # default_* keys map the per-event concepts to their guild-default storage.
 _GUILD_EDIT_PROPERTIES: list[dict] = [
-    {"key": "allowed_gamemodes",          "label_key": "edit.prop.allowed_gamemodes",          "kind": "list",          "source": db.get_unique_gamemodes},
-    {"key": "blacklisted_maps",           "label_key": "edit.prop.blacklisted_maps",           "kind": "list",          "source": db.get_unique_maps},
-    {"key": "blacklisted_factions",       "label_key": "edit.prop.blacklisted_factions",       "kind": "list",          "source": db.get_unique_factions},
-    {"key": "blacklisted_units",          "label_key": "edit.prop.blacklisted_units",          "kind": "list",          "source": db.get_unique_unit_types},
+    {"key": "allowed_gamemodes",          "label_key": "edit.prop.allowed_gamemodes",          "kind": "list",          "source": lambda gid: db.get_unique_gamemodes()},
+    {"key": "blacklisted_maps",           "label_key": "edit.prop.blacklisted_maps",           "kind": "list",          "source": lambda gid: db.get_unique_maps()},
+    {"key": "blacklisted_factions",       "label_key": "edit.prop.blacklisted_factions",       "kind": "list",          "source": lambda gid: db.get_unique_factions()},
+    {"key": "blacklisted_units",          "label_key": "edit.prop.blacklisted_units",          "kind": "list",          "source": lambda gid: db.get_unique_unit_types()},
     {"key": "max_suggestions_per_user",   "label_key": "edit.prop.max_per_user",               "kind": "int",           "min": 1, "max": 10},
     {"key": "max_total_suggestions",      "label_key": "edit.prop.max_total",                  "kind": "int",           "min": 1, "max": 25},
     {"key": "max_self_removals_per_user", "label_key": "edit.prop.max_self_removals",          "kind": "int",           "min": 0, "max": 10},
     {"key": "history_lookback_events",    "label_key": "edit.prop.history_lookback",           "kind": "int",           "min": 0, "max": 50},
-    {"key": "allowed_sources",            "label_key": "edit.prop.allowed_sources",            "kind": "list",          "source": db.get_unique_sources},
+    {"key": "allowed_sources",            "label_key": "edit.prop.allowed_sources",            "kind": "list",          "source": lambda gid: db.get_guild_sources(gid)},
     {"key": "default_voting_duration_hours",  "label_key": "config_defaults.prop.voting_duration",      "kind": "vote_duration"},
     {"key": "default_max_voting_layers",  "label_key": "config_defaults.prop.max_voting_layers",        "kind": "int", "min": 1, "max": 10},
     {"key": "default_allow_multiple_votes",   "label_key": "config_defaults.prop.allow_multiple_votes", "kind": "bool"},
@@ -5128,7 +5128,10 @@ async def _show_property_editor(interaction: discord.Interaction, user_id: int,
                 interaction, user_id, db_id, guild_id, lang, prop, obj, target=target)
             return
 
-        choices = prop["source"]() if prop.get("source") else []
+        # Every `source` callable takes the guild id, even the ones that do not
+        # vary by guild yet. A uniform contract is what keeps a guild-blind
+        # query from quietly becoming reachable from guild-scoped code.
+        choices = prop["source"](guild_id) if prop.get("source") else []
         if not choices:
             fallback_view = EditMainView(user_id, db_id, guild_id, lang, target=target)
             _set_active_view(user_id, fallback_view)

@@ -468,3 +468,24 @@ def test_guild_sources_put_the_custom_source_last(temp_db):
     _seed_layer(temp_db, "alpha_AAS_v1", "alpha", "Alpha", "AAS")
     _seed_layer(temp_db, "Belaya_TC_v1", "custom:1", "Belaya", "TerritoryControl")
     assert temp_db.get_guild_sources(1) == ["alpha", "zulu", "custom:1"]
+
+
+def test_every_edit_property_source_takes_a_guild_id(temp_db):
+    # A uniform Callable[[int], list[str]] is what lets a future change make
+    # any of these guild-aware without another signature migration.
+    import bot as botmod
+    _seed_reference_cache(temp_db)
+    tables = botmod._EDIT_PROPERTIES + botmod._GUILD_EDIT_PROPERTIES
+    callables = [p["source"] for p in tables if p.get("source")]
+    assert callables, "expected the property tables to carry source callables"
+    for fn in callables:
+        assert isinstance(fn(1), list)
+
+
+def test_allowed_sources_property_offers_the_custom_source(temp_db):
+    import bot as botmod
+    _seed_reference_cache(temp_db)
+    cl.save_custom_map(1, "Belaya", ["Belaya_TC_v1"], [], [])
+    for table in (botmod._EDIT_PROPERTIES, botmod._GUILD_EDIT_PROPERTIES):
+        prop = next(p for p in table if p["key"] == "allowed_sources")
+        assert prop["source"](1) == ["main", "custom:1"]
