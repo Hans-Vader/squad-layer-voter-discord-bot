@@ -132,12 +132,13 @@ Edge cases worth knowing: **ties** break deterministically toward the first-enco
 
 Implemented entirely in `database.py` as a thin, function-based wrapper over a single file at `data/layer_vote.db` (relative to the working dir; `data/` is auto-created). There is **no ORM and no long-lived connection** — every function opens a fresh connection via `_get_conn()`, which enables `PRAGMA journal_mode=WAL` and `PRAGMA foreign_keys=ON`, commits if writing, and closes. `init_db()` (idempotent, `CREATE TABLE IF NOT EXISTS`) runs on every startup.
 
-Four tables:
+Five tables (plus `source_units`, a small per-source vehicle-data cache alongside `layer_cache`):
 
 | Table | Role | Location |
 |---|---|---|
 | `guild_settings` | Per-guild config as a JSON blob merged over `DEFAULT_GUILD_SETTINGS` on read (organizer role, log channel, language, allowed gamemodes, blacklists, caps, `history_lookback_events`, allowed sources, create defaults). | database.py:113-118 |
 | `layer_cache` | Cached Squad layer metadata, rebuilt from `layers.json`. `UNIQUE(raw_name, source)`; indexed on `(map_name, gamemode)` and `source`. | database.py:120-139 |
+| `custom_layers` | Admin-defined maps: one row per `(guild_id, map_name)`, holding only what the organizer entered as a `payload` JSON blob (raw layer names, chosen factions, chosen unit types) plus `created_at`. The source of truth that `custom_layers.materialize_custom_layers()` expands into `layer_cache` rows. | database.py:160-166 |
 | `events` | Per-channel cycles; the whole event (incl. `suggestions`, `selected_for_vote`, votes, `winning_layer`, per-event `config`) lives in the `event_data` JSON blob. Indexed on `(guild_id, status)` and `(guild_id, channel_id, status)`. Multiple active events per channel allowed. | database.py:141-154 |
 | `voting_history` | Completed events: `all_suggestions` (JSON), `winning_layer` (JSON, nullable), `completed_at`. | database.py:156-166 |
 
@@ -164,6 +165,31 @@ Per source, `_build_faction_meta_map` (bot.py:295) parses the `Units` block into
 **Refresh is not periodic.** Startup auto-fetch fires **only when the cache is empty** (`on_ready`, gated on `get_layer_cache_count() == 0`); otherwise the cache persists across restarts and is updated only on demand via `/refresh_layers`.
 
 **SquadCalc integration** (utils.py:55-275): `build_squadcalc_url` produces a parameterized SquadCalc deep link **only for `source == "main"`** (the SquadCalc-compatible source). For SPM/SU/supermod layers, `build_map_icon_markdown` renders the 🗺️ icon as a masked link to a no-op Discord URL carrying just a hover tooltip (map + version + full faction names) rather than 404-ing on SquadCalc. When `SQUADCALC_BASE_URL` is empty, main-source layers fall back to a plain emoji.
+
+**Custom (admin-defined) maps** (`bot/custom_layers.py`): `custom_layers` is the
+source of truth for maps an organizer entered by hand; its `payload` holds
+only what was typed or picked — raw layer names plus the chosen factions and
+unit types. `materialize_custom_layers()` expands those rows into ordinary
+`layer_cache` rows tagged `custom:<guild_id>`, re-deriving gamemode, version
+and faction/unit metadata each time from a reference source
+(`resolve_reference_source()`, which prefers the SquadCalc-compatible `main`
+source) — this is why `/refresh_layers`, which wipes `layer_cache`
+wholesale, never loses a custom map. It runs at the end of
+`fetch_and_cache_layers()`, unconditionally again in `on_ready` (a harmless
+repeat when a fetch just ran), and inside `save_custom_map()` after every
+save; a delete instead removes the materialized rows directly
+(`remove_custom_map()` → `db.delete_layers()`), since there is nothing left
+to re-derive. When no fetched source is cached yet, materialization is a
+no-op — the definition is still stored, and the next `/refresh_layers` or
+save picks it up. `db.get_unique_sources()` excludes `custom:%`, so a
+guild's custom maps never appear in the source picker at event creation or
+in the **Allowed Layer Sources** list of the Edit Event dialog / `/config_defaults`;
+`_resolve_event_sources()` appends the guild's own custom source afterwards,
+whenever it actually holds layers, so a custom map is never *chosen* into an
+allow-list yet is always reachable in the suggestion flow. Per that
+function's docstring, this is deliberate: a guild's own maps aren't a data
+set to opt into or out of via Allowed Layer Sources — the map blacklist is
+the tool for hiding one.
 
 ### Configuration & i18n
 
@@ -204,6 +230,7 @@ Manual run (per README): `cd bot` then `python bot.py`. The SQLite path defaults
 | Suggestion dropdown chain | `bot/bot.py:872-1540` |
 | Poll creation / winner resolution / RCON command | `bot/bot.py:2338-2561`, `bot.py:683` (`build_admin_change_layer`) |
 | Layer fetch / parse / cache | `bot/bot.py:231-446`, `config.py:62-146` |
+| Custom (admin-defined) maps | `bot/custom_layers.py`, views in `bot/bot.py:2430-2672` |
 | SquadCalc links, embed/poll formatting | `bot/utils.py` |
 | SQLite schema + JSON-blob persistence | `bot/database.py` |
 | Env config | `bot/config.py` |

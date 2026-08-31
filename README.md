@@ -6,6 +6,7 @@ A Discord bot for collecting Squad layer suggestions from users and running vote
 
 - **Layer Suggestions**: Users suggest layers via interactive dropdown menus (Map > Mode > Factions > Units)
 - **Layer Data**: Pulls from [SquadLayerList](https://github.com/fantinodavide/SquadLayerList) and caches locally
+- **Custom Maps**: Organizers can register a modded or unreleased map's layers by hand via **Admin → Custom Maps**; they survive `/refresh_layers` and behave like any other layer
 - **Vehicle Info**: Shows each team's vehicle layout (named vehicles + counts) on the suggestion confirm screen, via the **Info** button (pick any suggested layer), and on the winning embed
 - **Mirror Match** *(per-event)*: Optionally force both teams to use the same unit type (factions may differ); exempts asymmetric modes (Invasion, Insurgency, Destruction, Frontline)
 - **Admin Blacklists**: Block maps, factions, unit types, or gamemodes
@@ -68,7 +69,7 @@ discord.py registers **13 slash commands**, in three permission tiers. Per-event
 | Info | View event info, your suggestions and recent winners — and pick any suggested layer to see its full per-team vehicle layout |
 | Admin | Open the admin panel (organizer only) |
 
-The **Admin panel** holds the per-event actions that used to be slash commands: **Open / Reopen Suggestions**, **Manage Suggestions** (a sub-panel with **Close Suggestions** and **Remove Suggestion** while suggestions are open), **Select for Vote**, **End Vote**, **Edit Event** (a DM dialog for gamemodes, blacklists, suggestion limits, voting parameters, and the Mirror Match toggle), **Edit Allow-list** (gate the event to specific roles/users), and **Delete Event**. Gated events also surface a **Join Voting** button on the poll.
+The **Admin panel** holds the per-event actions that used to be slash commands: **Open / Reopen Suggestions**, **Manage Suggestions** (a sub-panel with **Close Suggestions** and **Remove Suggestion** while suggestions are open), **Select for Vote**, **End Vote**, **Edit Event** (a DM dialog for gamemodes, blacklists, suggestion limits, voting parameters, and the Mirror Match toggle), **Edit Allow-list** (gate the event to specific roles/users), **Custom Maps** (register a map's layers by hand — guild-wide, so every event in the server can suggest it), and **Delete Event**. Gated events also surface a **Join Voting** button on the poll.
 
 ## Installation
 

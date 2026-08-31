@@ -140,6 +140,55 @@ Click the **"Admin"** button on the event embed for quick actions:
 - Delete the event
 - **Edit Event** — opens a DM dialog where you can rename the event and tweak per-event config (blacklists, voting duration, max suggestions, **Max Self-Removals per User**, etc.). Pick **Event Name** from the dropdown; submit empty to revert to `Event #ID`. **Max Self-Removals per User** controls how many times each player may remove their own suggestion (`0` disables the player-facing **Remove Suggestion** button).
 - **Edit Allow-list** — set which roles/users may participate. This lives on the event embed's Admin panel (not in the Edit Event DM dialog), because Discord's role/user pickers don't work inside DMs.
+- **Custom Maps** — register a map the layer data doesn't know; guild-wide, so every event in the server can suggest it once added (see below)
+
+### Adding a Custom Map
+
+Running a modded or unreleased map? Register it once and it shows up in
+suggestions like any other layer.
+
+1. Open **Admin → Custom Maps → Add Map**
+2. Paste the map's raw layer names, one per line. Both of these work:
+
+   ```
+   - Belaya_TC_v1
+   - Belaya_RAAS_v1
+   ```
+
+   ```
+   Belaya_TC_v1
+   Belaya_RAAS_v1
+   ```
+
+   All layers must belong to the **same map** — the part before the first
+   `_`. One map per save, up to 25 layers. The optional **Display name**
+   field controls how the map appears in dropdowns; leave it empty to use
+   the name parsed from the layer names you pasted.
+3. Optionally narrow the **Factions** and **Unit types** selects. Selecting
+   nothing means every faction and unit type the main game knows.
+4. **Save**
+
+If the layer cache is completely empty, step 1 refuses outright and tells
+you to run `/refresh_layers` first — there's no faction data yet to borrow
+loadouts from. If the cache empties again between opening the dialog and
+clicking **Save**, your definition is still stored, but no layers reach
+suggestions until `/refresh_layers` runs and picks it back up.
+
+Custom maps belong to your server, survive `/refresh_layers`, and appear as
+their own **Custom Maps** entry in the suggestion flow's source picker.
+Vehicle layouts are borrowed from the matching main-game factions. Saving
+the same map name again replaces it; the dropdown on the panel deletes one
+(with more than 25 custom maps, that dropdown only offers the first 25 —
+the panel says so under the list).
+
+> A layer whose game mode is switched off in your defaults will not appear
+> in suggestions — the save confirmation tells you which modes that affects.
+
+Custom maps can't be hidden with the **Allowed Layer Sources** setting
+(Edit Event, or the guild-wide default via `/config_defaults`) — once a
+custom map has layers, its source is always available to suggesters. To
+hide one instead, delete it here, or add its map name to **Blacklisted
+Maps**.
 
 ### Viewing Settings
 
