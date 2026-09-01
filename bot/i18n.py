@@ -626,6 +626,10 @@ _STRINGS: dict[str, dict[str, str]] = {
         "de": "In SquadCalc öffnen",
         "en": "Open in SquadCalc",
     },
+    "workshop.open": {
+        "de": "Im Steam Workshop öffnen",
+        "en": "Open in the Steam Workshop",
+    },
 
     # ── Buttons ───────────────────────────────────────────────────────────
     "button.suggest": {

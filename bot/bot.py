@@ -679,6 +679,19 @@ def _units_source(source: str) -> str:
     return source
 
 
+def _custom_workshop_url(source: str, guild_id: int,
+                         map_name: str) -> Optional[str]:
+    """The Steam Workshop link of the custom map behind a layer, or None.
+
+    Only admin-defined maps can carry one, so a fetched source short-circuits
+    without touching the database. Read live wherever the layer is being
+    picked, and snapshotted onto the suggestion once it is submitted.
+    """
+    if not (source or "").startswith(CUSTOM_SOURCE_PREFIX):
+        return None
+    return custom_layers.workshop_url_for(guild_id, map_name)
+
+
 def get_team_vehicles(layer_data: dict, faction: str, team: int,
                       unit_type: Optional[str], units_map: dict) -> list:
     """Return the (trimmed) vehicle list for a faction's chosen loadout on a team.
@@ -1903,12 +1916,19 @@ class Team2UnitSelect(ui.Select):
         await _show_confirm(interaction, state, settings)
 
 
-def _squadcalc_link_line(suggestion: dict, lang: str) -> str:
-    """Markdown 'Open in SquadCalc' link line for a suggestion.
+def _layer_link_line(suggestion: dict, lang: str) -> str:
+    """Markdown link line for a layer: Workshop, else SquadCalc, else nothing.
 
-    Returns "" when no SquadCalc URL applies (integration disabled, or a
-    non-main layer source that SquadCalc can't resolve).
+    Checked in utils.build_map_icon_markdown's order so this line and the 🗺️
+    icon can never name different destinations for the same layer. Empty when
+    neither applies — a custom map without a Workshop link, a supermod layer
+    SquadCalc cannot resolve, or the integration switched off. The icon still
+    renders in those cases, but as a tooltip-only link, which is no
+    destination to offer.
     """
+    url = suggestion.get("workshop_url")
+    if url:
+        return f"\n\n🗺️ [{t('workshop.open', lang)}]({url})"
     url = build_squadcalc_url(suggestion)
     if not url:
         return ""
@@ -1920,8 +1940,10 @@ async def _show_confirm(interaction: discord.Interaction, state: SuggestState, s
     lang = settings.get("language", "en") if settings else "en"
     mode_str = f"{state.gamemode} {state.layer_version}".strip() if state.layer_version else state.gamemode
 
-    # Preview-shaped suggestion for the SquadCalc link (mirrors the fields
-    # build_squadcalc_url reads from a stored suggestion).
+    # Preview-shaped suggestion for the layer link (mirrors the fields
+    # build_squadcalc_url reads from a stored suggestion). The Workshop link is
+    # read live here rather than snapshotted, so the confirmation always shows
+    # the link the map carries right now.
     preview = {
         "source": state.source,
         "map_name": state.map_name,
@@ -1933,6 +1955,8 @@ async def _show_confirm(interaction: discord.Interaction, state: SuggestState, s
         "team2_unit": state.team2_unit,
         "team1_unit_prefix": _resolve_unit_prefix(state.layer_data, state.team1_faction, 1),
         "team2_unit_prefix": _resolve_unit_prefix(state.layer_data, state.team2_faction, 2),
+        "workshop_url": _custom_workshop_url(state.source, state.guild_id,
+                                             state.map_name),
     }
 
     mirror_line = f"\n**Mirror Match:** {t('suggest.mirror_on', lang)}" if state.mirror_effective else ""
@@ -1955,7 +1979,7 @@ async def _show_confirm(interaction: discord.Interaction, state: SuggestState, s
             f"**Team 2:** {state.team2_faction} / {state.team2_unit}\n"
             f"{t2_veh}"
             f"{mirror_line}"
-            f"{_squadcalc_link_line(preview, lang)}"
+            f"{_layer_link_line(preview, lang)}"
         ),
         color=discord.Color.gold(),
     )
@@ -2053,9 +2077,8 @@ async def handle_suggest_submit(interaction: discord.Interaction, lang: str):
 
         # Snapshotted like the faction names above: the 🗺️ icon then links to
         # the mod's Workshop page, which SquadCalc cannot resolve.
-        if state.source.startswith(CUSTOM_SOURCE_PREFIX):
-            suggestion["workshop_url"] = custom_layers.workshop_url_for(
-                state.guild_id, state.map_name)
+        suggestion["workshop_url"] = _custom_workshop_url(
+            state.source, state.guild_id, state.map_name)
 
         # Check duplicate in current event
         for existing in event.get("suggestions", []):
@@ -4460,7 +4483,7 @@ async def _confirm_self_remove_suggestion(interaction: discord.Interaction,
         title=t("self_remove.confirm_title", lang),
         description=t("self_remove.confirm_prompt", lang,
                       layer=format_layer_short(suggestion))
-        + _squadcalc_link_line(suggestion, lang),
+        + _layer_link_line(suggestion, lang),
         color=discord.Color.orange(),
     )
 
@@ -6742,9 +6765,8 @@ async def _handle_history_add_submit(interaction: discord.Interaction,
     }
 
     # Kept in sync with the suggest flow; history embeds render no icon today.
-    if state.source.startswith(CUSTOM_SOURCE_PREFIX):
-        layer["workshop_url"] = custom_layers.workshop_url_for(
-            state.guild_id, state.map_name)
+    layer["workshop_url"] = _custom_workshop_url(
+        state.source, state.guild_id, state.map_name)
 
     db.save_voting_history(state.guild_id, state.channel_id, [layer], layer)
 
