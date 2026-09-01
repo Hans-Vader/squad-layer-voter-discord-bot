@@ -31,6 +31,7 @@ from utils import (
     format_layer_short, format_layer_poll_option, suggestion_matches,
     format_vehicle_list, build_ping_messages,
     build_event_embed, build_squadcalc_url, source_label, fit_lines_to_field,
+    build_legend_lines,
     build_winner_copy_text,
     set_log_channel, send_to_log_channel,
     normalize_event_name,
@@ -2173,6 +2174,13 @@ def _build_info_embed(interaction: discord.Interaction, event: dict,
         )
         embed.add_field(name=t("info.recent_winners", lang),
                         value=value, inline=False)
+
+    # Legend for the shorthand on the public board. It sits here rather than in
+    # the event embed's footer because it needs several lines and is read once.
+    legend = build_legend_lines(event, settings or {}, lang)
+    if legend:
+        embed.add_field(name=f"📖 {t('info.legend', lang)}",
+                        value="\n".join(legend), inline=False)
 
     return embed
 

@@ -23,6 +23,9 @@ Click the **"Info"** button on the event embed to see:
 - How many suggestions you've used
 - Your submitted suggestions
 - Recent winners in this channel (with the date each was decided)
+- A **legend** for the shorthand on the public board — only the abbreviations
+  actually in use, plus the SPM/SU and GoingDark prefixes when the SuperMod
+  source is active for the event
 
 It also has a **dropdown to pick any suggested layer** and view its full per-team **vehicle layout** (counts and types for both teams).
 

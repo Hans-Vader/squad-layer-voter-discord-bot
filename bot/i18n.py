@@ -610,17 +610,21 @@ _STRINGS: dict[str, dict[str, str]] = {
         "de": "Layer setzen",
         "en": "Set this layer",
     },
-    "embed.footer": {
-        "de": "Klick auf die Karte --> 🗺 um SquadCalc zu öffnen",
-        "en": "Click on the map --> 🗺 to open SquadCalc",
+    "embed.footer_squadcalc": {
+        "de": "🗺️ anklicken, um die Karte in SquadCalc zu öffnen",
+        "en": "Click 🗺️ to open the map in SquadCalc",
+    },
+    "embed.footer_workshop": {
+        "de": "🗺️ anklicken, um die Map im Steam Workshop zu öffnen",
+        "en": "Click 🗺️ to open the map in the Steam Workshop",
+    },
+    "embed.footer_mixed": {
+        "de": "🗺️ anklicken — je nach Layer SquadCalc oder Steam Workshop",
+        "en": "Click 🗺️ — SquadCalc or the Steam Workshop, depending on the layer",
     },
     "squadcalc.open": {
         "de": "In SquadCalc öffnen",
         "en": "Open in SquadCalc",
-    },
-    "embed.footer_legend_supermod": {
-        "de": "SPM/SU = SuperMod | GoingDark = SuperMod Nacht",
-        "en": "SPM/SU = SuperMod | GoingDark = SuperMod Night",
     },
 
     # ── Buttons ───────────────────────────────────────────────────────────
@@ -1185,6 +1189,14 @@ _STRINGS: dict[str, dict[str, str]] = {
     "info.recent_winners": {
         "de": "Letzte Gewinner",
         "en": "Recent Winners",
+    },
+    "info.legend": {
+        "de": "Legende",
+        "en": "Legend",
+    },
+    "info.legend_supermod": {
+        "de": "SPM/SU = SuperMod · GoingDark = SuperMod Nacht",
+        "en": "SPM/SU = SuperMod · GoingDark = SuperMod Night",
     },
     "info.recent_winners_more": {
         "de": "… und {count} weitere",
