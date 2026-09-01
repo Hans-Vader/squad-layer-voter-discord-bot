@@ -670,11 +670,16 @@ def build_winner_copy_text(event: dict, lang: str = "en") -> Optional[str]:
     t2u = winner.get("team2_unit", "?")
 
     first = f"🗺️ {map_name} — {mode_str}"
-    url = build_squadcalc_url(winner)
+    # Same precedence as build_map_icon_markdown, so the copied text names the
+    # destination the winner's 🗺️ icon carries. Both labels are brand names,
+    # so neither is translated.
+    url, label = winner.get("workshop_url"), "Steam Workshop"
+    if not url:
+        url, label = build_squadcalc_url(winner), "SquadCalc"
     if url:
         # Escaped brackets render the masked-link syntax as visible text, so
-        # select-copy carries the full [SquadCalc](url) markdown along.
-        first += f" — 🔗 \\[SquadCalc\\]({url})"
+        # select-copy carries the full \\[Steam Workshop\\](url) markdown along.
+        first += f" — 🔗 \\[{label}\\]({url})"
     # Short faction ids: the full names still appear in the team headers.
     first += (f"\n⚔️ {winner.get('team1_faction', '?')}/{t1u}"
               f" vs {winner.get('team2_faction', '?')}/{t2u}")

@@ -66,6 +66,28 @@ def test_copy_text_contains_all_sections_in_order(squadcalc):
     assert text.index("\\`\\`\\`") < text.index("Team 1")  # command block before vehicles
 
 
+def test_copy_text_names_the_workshop_when_the_winner_carries_one(squadcalc):
+    # A custom map's winner: the copied text must name the destination the
+    # winner's 🗺️ icon carries, not SquadCalc, which has no data for it.
+    workshop = "https://steamcommunity.com/sharedfiles/filedetails/?id=3025678901"
+    event = _event(source="custom:1")
+    event["winning_layer"]["workshop_url"] = workshop
+    text = utils.build_winner_copy_text(event, "en")
+
+    assert f"🔗 \\[Steam Workshop\\]({workshop})" in text
+    assert "SquadCalc" not in text
+
+
+def test_copy_text_workshop_link_outranks_a_usable_squadcalc_url(squadcalc):
+    # Defensive: an explicit link is never overridden by the derived one.
+    workshop = "https://steamcommunity.com/sharedfiles/filedetails/?id=3025678901"
+    event = _event()
+    event["winning_layer"]["workshop_url"] = workshop
+    text = utils.build_winner_copy_text(event, "en")
+
+    assert "Steam Workshop" in text and "squadcalc.app" not in text
+
+
 def test_copy_text_omits_squadcalc_link_for_supermod(squadcalc):
     text = utils.build_winner_copy_text(_event(source="supermod"), "en")
     assert "squadcalc.app" not in text
