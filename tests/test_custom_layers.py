@@ -174,6 +174,10 @@ def test_normalize_map_name_falls_back_and_truncates():
     assert cl.normalize_map_name("  Belaya Downs ", "Belaya") == "Belaya Downs"
     assert cl.normalize_map_name("", "Belaya") == "Belaya"
     assert len(cl.normalize_map_name("x" * 200, "Belaya")) == cl.MAX_MAP_NAME_LENGTH
+    # The parsed token is capped too: _LAYER_RE puts no bound on it, and an
+    # over-long name outgrows both the modal field that prefills it on an edit
+    # and the 100-char select values the pickers match on.
+    assert len(cl.normalize_map_name("", "A" * 200)) == cl.MAX_MAP_NAME_LENGTH
 
 
 def test_case_variant_duplicates_collapse():

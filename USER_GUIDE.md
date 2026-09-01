@@ -189,10 +189,26 @@ suggestions until `/refresh_layers` runs and picks it back up.
 
 Custom maps belong to your server, survive `/refresh_layers`, and appear as
 their own **Custom Maps** entry in the suggestion flow's source picker.
-Vehicle layouts are borrowed from the matching main-game factions. Saving
-the same map name again replaces it; the dropdown on the panel deletes one,
-after asking you to confirm (with more than 25 custom maps, that dropdown
-only offers the first 25 — the panel says so under the list).
+Vehicle layouts are borrowed from the matching main-game factions. A 🔗 next
+to a map in the list means it has a Steam Workshop link.
+
+To change an existing map, use the **"Edit a map…"** dropdown on the panel.
+It reopens the same dialog with everything filled in — layers, display name,
+Workshop link, and the factions and unit types already ticked — so you only
+touch what you want to change. Leaving a dropdown alone keeps its current
+selection.
+
+Changing the display name **renames** the map: the old definition and its
+cached layers are removed and it reappears under the new name. A name another
+custom map already uses is refused — capitalisation included, since two names
+differing only in case cannot be told apart when blacklisting — so a rename
+can never clobber a map you did not mean to touch. Fixing the capitalisation
+of the map's own name still works. (Saving the same name again from **Add**
+still replaces that map, as before.)
+
+The delete dropdown removes a map after asking you to confirm. With more
+than 25 custom maps, both dropdowns only offer the first 25 — the panel says
+so under the list.
 
 > A layer whose game mode is switched off in your defaults will not appear
 > in suggestions — the save confirmation tells you which modes that affects.

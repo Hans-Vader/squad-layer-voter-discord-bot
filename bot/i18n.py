@@ -962,6 +962,14 @@ _STRINGS: dict[str, dict[str, str]] = {
         "de": "Eigene Map hinzufügen",
         "en": "Add Custom Map",
     },
+    "custom_map.modal_title_edit": {
+        "de": "Eigene Map bearbeiten",
+        "en": "Edit Custom Map",
+    },
+    "custom_map.edit_placeholder": {
+        "de": "Map bearbeiten…",
+        "en": "Edit a map…",
+    },
     "custom_map.field_layers": {
         "de": "Layer — ein Layer pro Zeile",
         "en": "Layers — one layer per line",
@@ -1055,6 +1063,20 @@ _STRINGS: dict[str, dict[str, str]] = {
     "custom_map.err_too_many": {
         "de": "Maximal {max} Layer pro Map ({count} eingegeben).",
         "en": "At most {max} layers per map ({count} given).",
+    },
+    "custom_map.renamed": {
+        "de": "**{old}** heißt jetzt **{map}** ({count} Layer im Cache).",
+        "en": "**{old}** is now **{map}** ({count} layers cached).",
+    },
+    "custom_map.err_name_taken": {
+        "de": "**{map}** ist bereits eine eigene Map. Wähle einen anderen "
+              "Namen, oder lösche die andere Map zuerst.",
+        "en": "**{map}** is already a custom map. Pick another name, or "
+              "delete that map first.",
+    },
+    "custom_map.err_not_found": {
+        "de": "**{map}** gibt es nicht mehr — die Liste war veraltet.",
+        "en": "**{map}** no longer exists — the list was out of date.",
     },
     "custom_map.err_name_collision": {
         "de": "Der Anzeigename lässt sich nicht von der vorhandenen Karte **{map}** unterscheiden. Blacklist-Einträge greifen quellenübergreifend per Präfix, beide würden also gemeinsam ausgeblendet. Bitte einen eindeutigen Namen wählen.",

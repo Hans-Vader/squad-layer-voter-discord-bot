@@ -139,9 +139,15 @@ def parse_custom_layers(text: str) -> tuple[str, list[dict]]:
 
 
 def normalize_map_name(value: str, fallback: str) -> str:
-    """Display name for the map: the admin's input, else the parsed token."""
-    name = (value or "").strip()[:MAX_MAP_NAME_LENGTH]
-    return name or fallback
+    """Display name for the map: the admin's input, else the parsed token.
+
+    Both are capped: the parsed token has no length bound of its own (_LAYER_RE
+    puts none on it), and an over-long name would outgrow the modal field that
+    prefills it when the map is edited, as well as the 100-char select values
+    the edit and delete pickers match on.
+    """
+    name = (value or "").strip()
+    return (name or fallback)[:MAX_MAP_NAME_LENGTH]
 
 
 def normalize_workshop_url(value: Optional[str]) -> Optional[str]:

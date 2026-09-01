@@ -2525,24 +2525,57 @@ class CustomMapsView(AutoDisableView):
         self.add_item(back)
 
         if maps:
-            options = [
-                discord.SelectOption(label=m["map_name"][:100],
-                                     value=m["map_name"][:100],
-                                     description=t("custom_map.layer_count", lang,
-                                                   count=len(m["payload"].get("layers") or []))[:100])
-                for m in maps[:25]
-            ]
+            # Built fresh per select: two Selects must not share option
+            # objects, or a default set on one would show up on the other.
+            def map_options():
+                return [
+                    discord.SelectOption(label=m["map_name"][:100],
+                                         value=m["map_name"][:100],
+                                         description=t("custom_map.layer_count", lang,
+                                                       count=len(m["payload"].get("layers") or []))[:100])
+                    for m in maps[:25]
+                ]
+
             self.delete_select = ui.Select(
                 placeholder=t("custom_map.delete_placeholder", lang),
-                options=options, min_values=1, max_values=1, row=1)
+                options=map_options(), min_values=1, max_values=1, row=1)
             self.delete_select.callback = self._delete
             self.add_item(self.delete_select)
+
+            self.edit_select = ui.Select(
+                placeholder=t("custom_map.edit_placeholder", lang),
+                options=map_options(), min_values=1, max_values=1, row=2)
+            self.edit_select.callback = self._edit
+            self.add_item(self.edit_select)
 
     async def _add(self, interaction: discord.Interaction):
         # The modal replaces nothing yet — its submit handler edits this message.
         self.stop()  # retire: the wizard's own views take over from here, and
         # this view's 120s timeout must not fire on top of them later
         await interaction.response.send_modal(CustomMapModal(self.lang, self.db_id))
+
+    async def _edit(self, interaction: discord.Interaction):
+        """Reopen the add wizard with this map's stored definition filled in.
+
+        Same modal and same follow-up view as adding — only prefilled — so the
+        two paths cannot drift apart in what they validate or store.
+        """
+        map_name = self.edit_select.values[0]
+        entry = next((m for m in db.get_custom_maps(interaction.guild_id)
+                      if m["map_name"] == map_name), None)
+        if entry is None:
+            # Deleted from another session while this panel sat open.
+            await interaction.response.send_message(
+                embed=discord.Embed(
+                    description=t("custom_map.err_not_found", self.lang,
+                                  map=map_name),
+                    color=discord.Color.red()),
+                ephemeral=True)
+            return
+
+        self.stop()  # retire: the wizard's own views take over from here
+        await interaction.response.send_modal(
+            CustomMapModal(self.lang, self.db_id, entry=entry))
 
     async def _delete(self, interaction: discord.Interaction):
         """Ask before removing. Deleting a map drops its definition and every
@@ -2586,16 +2619,17 @@ async def _render_custom_maps(interaction: discord.Interaction, db_id: int,
 
     if maps:
         lines = [
-            "• **{}** — {}".format(
+            "• **{}**{} — {}".format(
                 m["map_name"],
+                " 🔗" if m["payload"].get("workshop_url") else "",
                 t("custom_map.layer_count", lang,
                   count=len(m["payload"].get("layers") or [])))
             for m in maps
         ]
         body = "\n".join(lines)
-        # The delete picker is capped at 25 options (Discord's hard limit) but
-        # the list above shows every map, so past 25 explain why the extras
-        # aren't selectable instead of leaving it unexplained.
+        # Both pickers are capped at 25 options (Discord's hard limit) but the
+        # list above shows every map, so past 25 explain why the extras aren't
+        # selectable instead of leaving it unexplained.
         if len(maps) > 25:
             body += "\n\n" + t("custom_map.truncated", lang)
     else:
@@ -2622,12 +2656,27 @@ class CustomMapModal(ui.Modal):
 
     Discord modals take text inputs only, so the faction and unit pickers can't
     live here — same reason EventScheduleModal hands off to a follow-up view.
+
+    Editing an existing map reuses this same modal with `entry` set, prefilled
+    from the stored payload, so adding and editing cannot drift apart in what
+    they accept. 25 layers are roughly 625 characters, well inside the field's
+    2000, so the whole definition round-trips through the form.
     """
 
-    def __init__(self, lang: str, db_id: int):
-        super().__init__(title=t("custom_map.modal_title", lang)[:45])
+    def __init__(self, lang: str, db_id: int, entry: Optional[dict] = None):
+        editing = entry is not None
+        title_key = ("custom_map.modal_title_edit" if editing
+                     else "custom_map.modal_title")
+        super().__init__(title=t(title_key, lang)[:45])
         self.lang = lang
         self.db_id = db_id
+
+        # The name the map is stored under right now. A different name in the
+        # form is a rename, not a second map — see CustomMapDetailsView._save.
+        self.original_name = entry["map_name"] if editing else None
+        payload = (entry or {}).get("payload") or {}
+        self.preselected_factions = list(payload.get("factions") or [])
+        self.preselected_units = list(payload.get("units") or [])
 
         self.layers_input = ui.TextInput(
             label=t("custom_map.field_layers", lang)[:45],
@@ -2635,6 +2684,7 @@ class CustomMapModal(ui.Modal):
             placeholder=t("custom_map.field_layers_hint", lang)[:100],
             required=True,
             max_length=2000,
+            default="\n".join(payload.get("layers") or []) or None,
         )
         self.add_item(self.layers_input)
 
@@ -2642,6 +2692,7 @@ class CustomMapModal(ui.Modal):
             label=t("custom_map.field_display_name", lang)[:45],
             required=False,
             max_length=custom_layers.MAX_MAP_NAME_LENGTH,
+            default=self.original_name,
         )
         self.add_item(self.name_input)
 
@@ -2650,6 +2701,7 @@ class CustomMapModal(ui.Modal):
             placeholder=t("custom_map.field_workshop_hint", lang)[:100],
             required=False,
             max_length=custom_layers.MAX_WORKSHOP_URL_LENGTH,
+            default=payload.get("workshop_url"),
         )
         self.add_item(self.workshop_input)
 
@@ -2682,7 +2734,12 @@ class CustomMapModal(ui.Modal):
         map_name = custom_layers.normalize_map_name(
             str(self.name_input.value), map_token)
 
-        clash = custom_layers.colliding_map_name(map_name)
+        # Only when the name is actually changing. A fetched map that appears
+        # after this custom map was created would otherwise make every edit of
+        # it impossible, including edits that never touch the name, leaving the
+        # admin no way out but delete-and-re-add.
+        clash = (custom_layers.colliding_map_name(map_name)
+                 if map_name != self.original_name else None)
         if clash:
             await interaction.response.send_message(
                 embed=discord.Embed(
@@ -2692,8 +2749,30 @@ class CustomMapModal(ui.Modal):
                 ephemeral=True)
             return
 
+        # Re-using a name in the add flow deliberately replaces that map, but
+        # renaming one onto another's name would clobber a map the admin never
+        # named — that gets refused instead. Compared case-insensitively like
+        # colliding_map_name: get_unique_maps filters the blacklist by
+        # case-insensitive prefix, so two names differing only in case would be
+        # indistinguishable there and blacklisting either would hide both. A
+        # case-only self-rename still passes, since both sides fold alike.
+        renaming = (self.original_name
+                    and map_name.lower() != self.original_name.lower())
+        if renaming and any(m["map_name"].lower() == map_name.lower()
+                            for m in db.get_custom_maps(interaction.guild_id)):
+            await interaction.response.send_message(
+                embed=discord.Embed(
+                    description=t("custom_map.err_name_taken", self.lang,
+                                  map=map_name),
+                    color=discord.Color.red()),
+                ephemeral=True)
+            return
+
         view = CustomMapDetailsView(self.lang, self.db_id, map_name, layers,
-                                    faction_ids, unit_types, workshop_url)
+                                    faction_ids, unit_types, workshop_url,
+                                    original_name=self.original_name,
+                                    preselected_factions=self.preselected_factions,
+                                    preselected_units=self.preselected_units)
         embed = discord.Embed(
             title=t("custom_map.details_title", self.lang),
             description=t("custom_map.details_desc", self.lang,
@@ -2716,24 +2795,36 @@ class CustomMapDetailsView(AutoDisableView):
     steps share a screen rather than chaining two round trips. Selecting
     nothing means "everything the main game knows" — resolved at
     materialization, not frozen here.
+
+    When editing, `preselected_*` carries the stored definition in. That is not
+    cosmetic: the select callbacks only fire when someone opens the dropdown,
+    and an empty list means "every faction" downstream, so seeding from `[]`
+    would silently widen a deliberately narrowed map as soon as an edit touched
+    anything else. Untouched selects therefore save exactly what was there
+    before, including values the reference source no longer knows.
     """
 
     def __init__(self, lang: str, db_id: int, map_name: str, layers: list[dict],
                  faction_ids: list[str], unit_types: list[str],
-                 workshop_url: Optional[str] = None):
+                 workshop_url: Optional[str] = None,
+                 original_name: Optional[str] = None,
+                 preselected_factions: Optional[list[str]] = None,
+                 preselected_units: Optional[list[str]] = None):
         super().__init__(timeout=300)
         self.lang = lang
         self.db_id = db_id
         self.map_name = map_name
         self.layers = layers
         self.workshop_url = workshop_url
-        self.selected_factions: list[str] = []
-        self.selected_units: list[str] = []
+        self.original_name = original_name
+        self.selected_factions: list[str] = list(preselected_factions or [])
+        self.selected_units: list[str] = list(preselected_units or [])
         self.truncated = len(faction_ids) > 25 or len(unit_types) > 25
 
         self.faction_select = ui.Select(
             placeholder=t("custom_map.factions_placeholder", lang),
-            options=[discord.SelectOption(label=f[:100], value=f)
+            options=[discord.SelectOption(label=f[:100], value=f,
+                                          default=f in self.selected_factions)
                      for f in faction_ids[:25]],
             min_values=0, max_values=min(len(faction_ids), 25) or 1, row=0)
         self.faction_select.callback = self._factions_changed
@@ -2741,7 +2832,8 @@ class CustomMapDetailsView(AutoDisableView):
 
         self.unit_select = ui.Select(
             placeholder=t("custom_map.units_placeholder", lang),
-            options=[discord.SelectOption(label=u[:100], value=u)
+            options=[discord.SelectOption(label=u[:100], value=u,
+                                          default=u in self.selected_units)
                      for u in unit_types[:25]],
             min_values=0, max_values=min(len(unit_types), 25) or 1, row=1)
         self.unit_select.callback = self._units_changed
@@ -2762,8 +2854,17 @@ class CustomMapDetailsView(AutoDisableView):
 
     async def _save(self, interaction: discord.Interaction):
         settings = db.get_guild_settings(interaction.guild_id) or {}
+        renamed = bool(self.original_name
+                       and self.original_name != self.map_name)
         existed = any(m["map_name"] == self.map_name
                       for m in db.get_custom_maps(interaction.guild_id))
+
+        if renamed:
+            # The store keys on (guild, map_name), so without this the map
+            # would exist twice — under both names, with stale cached layers
+            # under the old one.
+            custom_layers.remove_custom_map(interaction.guild_id,
+                                            self.original_name)
 
         written = custom_layers.save_custom_map(
             interaction.guild_id, self.map_name,
@@ -2776,8 +2877,12 @@ class CustomMapDetailsView(AutoDisableView):
             # /refresh_layers will pick it up, but do not claim success now.
             notice = t("custom_map.no_reference_data", self.lang)
         else:
-            key = "custom_map.replaced" if existed else "custom_map.saved"
-            notice = t(key, self.lang, map=self.map_name, count=written)
+            if renamed:
+                key = "custom_map.renamed"
+            else:
+                key = "custom_map.replaced" if existed else "custom_map.saved"
+            notice = t(key, self.lang, map=self.map_name, count=written,
+                       old=self.original_name)
 
             source = custom_layers.resolve_reference_source()
             inactive = custom_layers.inactive_gamemodes(
