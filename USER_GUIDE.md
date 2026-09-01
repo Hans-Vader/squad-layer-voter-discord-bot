@@ -171,9 +171,12 @@ suggestions like any other layer.
    Workshop page instead of SquadCalc (which knows nothing about custom
    maps); only a `steamcommunity.com/sharedfiles/filedetails/?id=…` (or
    `/workshop/filedetails/?id=…`) link is accepted, and leaving it empty on a
-   re-save clears it. The link is attached to a suggestion when it is made,
-   so add it **before** suggestions open — adding it to an existing map
-   leaves the icons of already-submitted suggestions pointing at SquadCalc.
+   re-save clears it. The link is attached to a suggestion when it is made, so
+   add it **before** suggestions open — adding it to an existing map leaves the
+   icons of already-submitted suggestions pointing at SquadCalc. The
+   confirmation step at the end of the suggestion flow offers the same link as
+   a line: where a main-game layer says "Open in SquadCalc", a custom map with
+   a link says "Open in the Steam Workshop".
 3. Optionally narrow the **Factions** and **Unit types** selects. Selecting
    nothing means every faction and unit type the main game knows.
 4. **Save**
