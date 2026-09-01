@@ -31,6 +31,7 @@ from utils import (
     format_layer_short, format_layer_poll_option, suggestion_matches,
     format_vehicle_list, build_ping_messages,
     build_event_embed, build_squadcalc_url, source_label, fit_lines_to_field,
+    build_legend_lines,
     build_winner_copy_text,
     set_log_channel, send_to_log_channel,
     normalize_event_name,
@@ -2050,6 +2051,12 @@ async def handle_suggest_submit(interaction: discord.Interaction, lang: str):
             "suggested_at": datetime.now().isoformat(),
         }
 
+        # Snapshotted like the faction names above: the 🗺️ icon then links to
+        # the mod's Workshop page, which SquadCalc cannot resolve.
+        if state.source.startswith(CUSTOM_SOURCE_PREFIX):
+            suggestion["workshop_url"] = custom_layers.workshop_url_for(
+                state.guild_id, state.map_name)
+
         # Check duplicate in current event
         for existing in event.get("suggestions", []):
             if suggestion_matches(suggestion, existing):
@@ -2167,6 +2174,13 @@ def _build_info_embed(interaction: discord.Interaction, event: dict,
         )
         embed.add_field(name=t("info.recent_winners", lang),
                         value=value, inline=False)
+
+    # Legend for the shorthand on the public board. It sits here rather than in
+    # the event embed's footer because it needs several lines and is read once.
+    legend = build_legend_lines(event, settings or {}, lang)
+    if legend:
+        embed.add_field(name=f"📖 {t('info.legend', lang)}",
+                        value="\n".join(legend), inline=False)
 
     return embed
 
@@ -2608,10 +2622,20 @@ class CustomMapModal(ui.Modal):
         )
         self.add_item(self.name_input)
 
+        self.workshop_input = ui.TextInput(
+            label=t("custom_map.field_workshop_url", lang)[:45],
+            placeholder=t("custom_map.field_workshop_hint", lang)[:100],
+            required=False,
+            max_length=custom_layers.MAX_WORKSHOP_URL_LENGTH,
+        )
+        self.add_item(self.workshop_input)
+
     async def on_submit(self, interaction: discord.Interaction):
         try:
             map_token, layers = custom_layers.parse_custom_layers(
                 str(self.layers_input.value))
+            workshop_url = custom_layers.normalize_workshop_url(
+                str(self.workshop_input.value))
         except custom_layers.CustomLayerError as e:
             await interaction.response.send_message(
                 embed=discord.Embed(description=t(e.key, self.lang, **e.params),
@@ -2646,7 +2670,7 @@ class CustomMapModal(ui.Modal):
             return
 
         view = CustomMapDetailsView(self.lang, self.db_id, map_name, layers,
-                                    faction_ids, unit_types)
+                                    faction_ids, unit_types, workshop_url)
         embed = discord.Embed(
             title=t("custom_map.details_title", self.lang),
             description=t("custom_map.details_desc", self.lang,
@@ -2672,12 +2696,14 @@ class CustomMapDetailsView(AutoDisableView):
     """
 
     def __init__(self, lang: str, db_id: int, map_name: str, layers: list[dict],
-                 faction_ids: list[str], unit_types: list[str]):
+                 faction_ids: list[str], unit_types: list[str],
+                 workshop_url: Optional[str] = None):
         super().__init__(timeout=300)
         self.lang = lang
         self.db_id = db_id
         self.map_name = map_name
         self.layers = layers
+        self.workshop_url = workshop_url
         self.selected_factions: list[str] = []
         self.selected_units: list[str] = []
         self.truncated = len(faction_ids) > 25 or len(unit_types) > 25
@@ -2719,7 +2745,7 @@ class CustomMapDetailsView(AutoDisableView):
         written = custom_layers.save_custom_map(
             interaction.guild_id, self.map_name,
             [layer["raw_name"] for layer in self.layers],
-            self.selected_factions, self.selected_units)
+            self.selected_factions, self.selected_units, self.workshop_url)
 
         if written == 0:
             # Nothing reached the cache — materialization needs a fetched source
@@ -6714,6 +6740,11 @@ async def _handle_history_add_submit(interaction: discord.Interaction,
         "source": state.source,
         "suggested_at": datetime.now().isoformat(),
     }
+
+    # Kept in sync with the suggest flow; history embeds render no icon today.
+    if state.source.startswith(CUSTOM_SOURCE_PREFIX):
+        layer["workshop_url"] = custom_layers.workshop_url_for(
+            state.guild_id, state.map_name)
 
     db.save_voting_history(state.guild_id, state.channel_id, [layer], layer)
 

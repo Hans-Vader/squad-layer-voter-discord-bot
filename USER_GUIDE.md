@@ -23,6 +23,9 @@ Click the **"Info"** button on the event embed to see:
 - How many suggestions you've used
 - Your submitted suggestions
 - Recent winners in this channel (with the date each was decided)
+- A **legend** for the shorthand on the public board — only the abbreviations
+  actually in use, plus the SPM/SU and GoingDark prefixes when the SuperMod
+  source is active for the event
 
 It also has a **dropdown to pick any suggested layer** and view its full per-team **vehicle layout** (counts and types for both teams).
 
@@ -163,7 +166,14 @@ suggestions like any other layer.
    All layers must belong to the **same map** — the part before the first
    `_`. One map per save, up to 25 layers. The optional **Display name**
    field controls how the map appears in dropdowns; leave it empty to use
-   the name parsed from the layer names you pasted.
+   the name parsed from the layer names you pasted. The optional **Steam
+   Workshop link** field makes the 🗺️ icon next to the layer open the mod's
+   Workshop page instead of SquadCalc (which knows nothing about custom
+   maps); only a `steamcommunity.com/sharedfiles/filedetails/?id=…` (or
+   `/workshop/filedetails/?id=…`) link is accepted, and leaving it empty on a
+   re-save clears it. The link is attached to a suggestion when it is made,
+   so add it **before** suggestions open — adding it to an existing map
+   leaves the icons of already-submitted suggestions pointing at SquadCalc.
 3. Optionally narrow the **Factions** and **Unit types** selects. Selecting
    nothing means every faction and unit type the main game knows.
 4. **Save**

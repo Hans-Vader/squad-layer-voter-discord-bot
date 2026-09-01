@@ -5,7 +5,7 @@ import asyncio
 import discord
 
 import bot as botmod
-import custom_layers as cl  # noqa: F401  (import guard: the view calls into it)
+import custom_layers as cl
 from i18n import t
 
 
@@ -142,11 +142,22 @@ def test_details_view_starts_with_nothing_selected():
     assert view.selected_units == []
 
 
-def test_modal_carries_two_text_inputs():
+def test_modal_carries_three_text_inputs():
     modal = botmod.CustomMapModal("de", 1)
-    assert len(modal.children) == 2
+    assert len(modal.children) == 3
     assert modal.layers_input.required is True
     assert modal.name_input.required is False
+    assert modal.workshop_input.required is False
+
+
+def test_details_view_carries_the_workshop_url_to_the_save(temp_db):
+    _seed_reference_cache(temp_db)
+    workshop = "https://steamcommunity.com/sharedfiles/filedetails/?id=3025678901"
+    view = botmod.CustomMapDetailsView("en", 1, "Belaya", LAYERS,
+                                       ["USA"], ["CombinedArms"], workshop)
+    asyncio.run(view._save(_StubInteraction(1)))
+
+    assert cl.workshop_url_for(1, "Belaya") == workshop
 
 
 def _seed_reference_cache(db):

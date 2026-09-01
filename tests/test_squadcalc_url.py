@@ -41,3 +41,22 @@ def test_cl_suffix_does_not_leak_into_layer_param(squadcalc):
 def test_falls_back_to_gamemode_without_raw_name(squadcalc):
     s = _suggestion(gamemode="AAS", raw_name=None)
     assert "layer=AASv1" in utils.build_squadcalc_url(s)
+
+
+def test_workshop_url_wins_over_the_squadcalc_fallback(squadcalc, monkeypatch):
+    # A custom map never resolves to a SquadCalc URL, so without a Workshop
+    # link the icon lands on SquadCalc's homepage (_TOOLTIP_NOOP_URL).
+    monkeypatch.setattr(utils, "_TOOLTIP_NOOP_URL", "https://squadcalc.app")
+    custom = _suggestion(source="custom:1")
+    assert "squadcalc.app" in utils.build_map_icon_markdown(custom)
+
+    workshop = "https://steamcommunity.com/sharedfiles/filedetails/?id=3025678901"
+    custom["workshop_url"] = workshop
+    assert utils.build_map_icon_markdown(custom).startswith(f"[🗺️]({workshop} \"")
+
+
+def test_workshop_url_wins_for_main_source_too(squadcalc):
+    # Defensive ordering: an explicit link is never overridden by the params.
+    workshop = "https://steamcommunity.com/sharedfiles/filedetails/?id=3025678901"
+    markdown = utils.build_map_icon_markdown(_suggestion(workshop_url=workshop))
+    assert workshop in markdown and "?map=" not in markdown

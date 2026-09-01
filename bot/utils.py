@@ -363,8 +363,13 @@ def build_map_icon_markdown(suggestion: dict) -> str:
     The hover tooltip — map + version + full faction names — is identical
     across sources. Falls back to a plain emoji when no URL is available
     (e.g. SquadCalc disabled and main source).
+
+    A custom map with a Steam Workshop link wins over both: SquadCalc has no
+    data for admin-defined maps, so the icon points at the mod instead.
     """
-    url = build_squadcalc_url(suggestion) or _fallback_icon_url(suggestion)
+    url = (suggestion.get("workshop_url")
+           or build_squadcalc_url(suggestion)
+           or _fallback_icon_url(suggestion))
     if not url:
         return "🗺️"
     return f'[🗺️]({url} "{_build_layer_tooltip(suggestion)}")'
@@ -470,6 +475,45 @@ _UNIT_ABBREV = {
     "LightInfantry": "LightInf",
     "CombinedArms": "CombArms"
 }
+
+# Which suggestion fields each abbreviation table shortens, in the order the
+# legend lists them. Drives build_legend_lines: a table that never fired
+# contributes no line, so the legend only explains what is actually on screen.
+_ABBREV_FIELDS = (
+    (_GAMEMODE_ABBREV, ("gamemode",)),
+    (_UNIT_ABBREV, ("team1_unit", "team2_unit")),
+    (_MAP_NAME_ABBREV, ("map_name",)),
+)
+
+
+def build_legend_lines(event: dict, settings: dict, lang: str = "en") -> list[str]:
+    """Legend for the shorthand this event's board actually shows.
+
+    Rendered by the Info panel, not the event embed: a footer holds one line,
+    and the abbreviations need several. The SuperMod line is keyed on the
+    active layer sources (SPM/SU and GoingDark are raw-name prefixes, not
+    table entries); every other line is derived from the listed suggestions,
+    so a board without a shortened name gets no line for it.
+
+    Suggestions are read regardless of phase — they stay visible in the poll
+    and in the scrollback after the board switches to the winner block.
+    """
+    lines: list[str] = []
+    if _event_uses_supermod(event, settings or {}):
+        lines.append(t("info.legend_supermod", lang))
+
+    suggestions = event.get("suggestions") or []
+    for table, fields in _ABBREV_FIELDS:
+        pairs = {}
+        for suggestion in suggestions:
+            for field in fields:
+                value = suggestion.get(field)
+                if value in table:
+                    pairs[table[value]] = value
+        if pairs:
+            lines.append(" · ".join(f"{short} = {long}"
+                                    for short, long in sorted(pairs.items())))
+    return lines
 
 
 def format_layer_poll_option(suggestion: dict) -> str:
@@ -669,6 +713,28 @@ def build_winner_copy_text(event: dict, lang: str = "en") -> Optional[str]:
     return text  # pathological (fixed parts alone exceed the limit)
 
 
+def _icon_link_kinds(layers: list[dict]) -> set[str]:
+    """Where the 🗺️ icons of these layers point: workshop, squadcalc.
+
+    Checked in build_map_icon_markdown's own order, so the footer can never
+    name a destination the icon does not carry. Layers whose icon is only a
+    tooltip link (or a bare emoji) contribute nothing — there is no
+    destination to announce.
+
+    Takes the layers the embed actually rendered, not the event: a voting
+    board shows only the ballot, and a long board collapses its tail, so
+    deriving the set from `event["suggestions"]` would claim destinations
+    nobody on that board can click.
+    """
+    kinds = set()
+    for layer in layers:
+        if layer.get("workshop_url"):
+            kinds.add("workshop")
+        elif build_squadcalc_url(layer):
+            kinds.add("squadcalc")
+    return kinds
+
+
 def build_event_embed(event: dict, settings: dict, db_id: int,
                       vote_counts: Optional[dict] = None) -> Embed:
     """Build the main event embed displayed in the channel.
@@ -737,6 +803,9 @@ def build_event_embed(event: dict, settings: dict, db_id: int,
     max_total = (event.get("config") or {}).get(
         "max_total_suggestions", settings.get("max_total_suggestions", 25))
 
+    # Filled as fields are added; the footer speaks for exactly these layers.
+    rendered: list[dict] = []
+
     if phase in ("suggestions_open", "suggestions_closed", "voting"):
         if suggestions:
             # A non-empty vote_counts dict means the poll is live and we have
@@ -760,12 +829,14 @@ def build_event_embed(event: dict, settings: dict, db_id: int,
                 # among ties.
                 ballot.sort(key=lambda s: -counts[s["id"]])
                 total = sum(counts.values())
+                listed = ballot
                 entries = [
                     _format_vote_result_entry(rank, s, counts[s["id"]], total)
                     for rank, s in enumerate(ballot, 1)
                 ]
                 header = f"📋 {t('embed.live_results_header', lang)}"
             else:
+                listed = suggestions
                 entries = [
                     format_suggestion_entry(i, s)
                     for i, s in enumerate(suggestions, 1)
@@ -782,8 +853,11 @@ def build_event_embed(event: dict, settings: dict, db_id: int,
                 name = header if idx == 0 else "\u200b"
                 remaining = len(entries) - idx
                 out_of_fields = len(embed.fields) >= 24 and remaining > 1
+                # 80 chars held back for the footer, which is set after this
+                # loop and would otherwise push a full embed past Discord's cap.
                 out_of_chars = (idx > 0
-                                and _embed_total_chars(embed) + len(name) + len(entry) > 6000)
+                                and _embed_total_chars(embed) + len(name) + len(entry)
+                                > 6000 - 80)
                 if idx > 0 and (out_of_fields or out_of_chars):
                     embed.add_field(
                         name="\u200b",
@@ -792,6 +866,7 @@ def build_event_embed(event: dict, settings: dict, db_id: int,
                     )
                     break
                 embed.add_field(name=name, value=entry, inline=False)
+                rendered.append(listed[idx])
 
         else:
             embed.add_field(
@@ -842,6 +917,7 @@ def build_event_embed(event: dict, settings: dict, db_id: int,
                 value=winner_text,
                 inline=False,
             )
+            rendered.append(winner)
 
             # Per-team vehicle layout, resolved & stored on the winner at vote
             # completion. Absent on legacy/history winners → skip silently.
@@ -872,19 +948,17 @@ def build_event_embed(event: dict, settings: dict, db_id: int,
                     inline=False,
                 )
 
-    # Footer: when the supermod source is active, the legend takes the slot
-    # so users can decode SPM/SU and GoingDark prefixes (the SquadCalc hint
-    # is suppressed since SquadCalc has no supermod map data anyway).
-    # Otherwise we fall back to the SquadCalc hint, which only makes sense
-    # when clickable map icons are visible (during/after suggestions, or on
-    # a completed winner).
-    if _event_uses_supermod(event, settings):
-        embed.set_footer(text=t("embed.footer_legend_supermod", lang))
-    else:
-        show_squadcalc_hint = (
-            phase in ("suggestions_open", "suggestions_closed", "voting")
-            and event.get("suggestions")
-        ) or (phase == "completed" and event.get("winning_layer"))
-        if show_squadcalc_hint:
-            embed.set_footer(text=t("embed.footer", lang))
+    # Footer: says where the 🗺️ icons on THIS board actually lead, derived
+    # from the same precedence build_map_icon_markdown applies. A no-op
+    # tooltip link is no destination, so a board with nothing clickable gets
+    # no footer at all rather than a claim that does not hold. The SuperMod
+    # legend used to occupy this slot; it lives in the Info panel now, which
+    # has room for every abbreviation instead of just one line.
+    kinds = _icon_link_kinds(rendered)
+    if kinds == {"squadcalc"}:
+        embed.set_footer(text=t("embed.footer_squadcalc", lang))
+    elif kinds == {"workshop"}:
+        embed.set_footer(text=t("embed.footer_workshop", lang))
+    elif kinds:
+        embed.set_footer(text=t("embed.footer_mixed", lang))
     return embed

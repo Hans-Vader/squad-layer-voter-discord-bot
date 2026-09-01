@@ -610,17 +610,21 @@ _STRINGS: dict[str, dict[str, str]] = {
         "de": "Layer setzen",
         "en": "Set this layer",
     },
-    "embed.footer": {
-        "de": "Klick auf die Karte --> 🗺 um SquadCalc zu öffnen",
-        "en": "Click on the map --> 🗺 to open SquadCalc",
+    "embed.footer_squadcalc": {
+        "de": "🗺️ anklicken, um die Karte in SquadCalc zu öffnen",
+        "en": "Click 🗺️ to open the map in SquadCalc",
+    },
+    "embed.footer_workshop": {
+        "de": "🗺️ anklicken, um die Map im Steam Workshop zu öffnen",
+        "en": "Click 🗺️ to open the map in the Steam Workshop",
+    },
+    "embed.footer_mixed": {
+        "de": "🗺️ anklicken — je nach Layer SquadCalc oder Steam Workshop",
+        "en": "Click 🗺️ — SquadCalc or the Steam Workshop, depending on the layer",
     },
     "squadcalc.open": {
         "de": "In SquadCalc öffnen",
         "en": "Open in SquadCalc",
-    },
-    "embed.footer_legend_supermod": {
-        "de": "SPM/SU = SuperMod | GoingDark = SuperMod Nacht",
-        "en": "SPM/SU = SuperMod | GoingDark = SuperMod Night",
     },
 
     # ── Buttons ───────────────────────────────────────────────────────────
@@ -955,8 +959,8 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "Add Custom Map",
     },
     "custom_map.field_layers": {
-        "de": "Layer — einer pro Zeile",
-        "en": "Layers — one per line",
+        "de": "Layer — ein Layer pro Zeile",
+        "en": "Layers — one layer per line",
     },
     "custom_map.field_layers_hint": {
         "de": "Belaya_RAAS_v1\nBelaya_AAS_v1",
@@ -965,6 +969,20 @@ _STRINGS: dict[str, dict[str, str]] = {
     "custom_map.field_display_name": {
         "de": "Anzeigename (optional)",
         "en": "Display name (optional)",
+    },
+    "custom_map.field_workshop_url": {
+        "de": "Steam-Workshop-Link (optional)",
+        "en": "Steam Workshop link (optional)",
+    },
+    "custom_map.field_workshop_hint": {
+        "de": "https://steamcommunity.com/sharedfiles/filedetails/?id=123456789",
+        "en": "https://steamcommunity.com/sharedfiles/filedetails/?id=123456789",
+    },
+    "custom_map.err_bad_workshop_url": {
+        "de": "Kein Steam-Workshop-Link. Erwartet: "
+              "https://steamcommunity.com/sharedfiles/filedetails/?id=123456789",
+        "en": "Not a Steam Workshop link. Expected: "
+              "https://steamcommunity.com/sharedfiles/filedetails/?id=123456789",
     },
     "custom_map.details_title": {
         "de": "Fraktionen & Unit-Typen",
@@ -1171,6 +1189,14 @@ _STRINGS: dict[str, dict[str, str]] = {
     "info.recent_winners": {
         "de": "Letzte Gewinner",
         "en": "Recent Winners",
+    },
+    "info.legend": {
+        "de": "Legende",
+        "en": "Legend",
+    },
+    "info.legend_supermod": {
+        "de": "SPM/SU = SuperMod · GoingDark = SuperMod Nacht",
+        "en": "SPM/SU = SuperMod · GoingDark = SuperMod Night",
     },
     "info.recent_winners_more": {
         "de": "… und {count} weitere",

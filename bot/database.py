@@ -154,7 +154,8 @@ def init_db():
 
         -- Admin-defined maps, one row per (guild, map). `payload` holds only
         -- what the organizer entered: {"layers": [rawName, ...],
-        -- "factions": [...], "units": [...]}. Everything derivable is
+        -- "factions": [...], "units": [...], "workshop_url": str|null}.
+        -- Everything derivable is
         -- re-resolved when the rows are materialized into layer_cache, so this
         -- table survives a /refresh_layers that wipes the cache.
         CREATE TABLE IF NOT EXISTS custom_layers (
