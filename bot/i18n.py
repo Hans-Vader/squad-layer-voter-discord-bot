@@ -959,8 +959,8 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "Add Custom Map",
     },
     "custom_map.field_layers": {
-        "de": "Layer — einer pro Zeile",
-        "en": "Layers — one per line",
+        "de": "Layer — ein Layer pro Zeile",
+        "en": "Layers — one layer per line",
     },
     "custom_map.field_layers_hint": {
         "de": "Belaya_RAAS_v1\nBelaya_AAS_v1",
