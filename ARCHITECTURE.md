@@ -138,7 +138,7 @@ Five tables (plus `source_units`, a small per-source vehicle-data cache alongsid
 |---|---|---|
 | `guild_settings` | Per-guild config as a JSON blob merged over `DEFAULT_GUILD_SETTINGS` on read (organizer role, log channel, language, allowed gamemodes, blacklists, caps, `history_lookback_events`, allowed sources, create defaults). | database.py:113-118 |
 | `layer_cache` | Cached Squad layer metadata, rebuilt from `layers.json`. `UNIQUE(raw_name, source)`; indexed on `(map_name, gamemode)` and `source`. | database.py:120-139 |
-| `custom_layers` | Admin-defined maps: one row per `(guild_id, map_name)`, holding only what the organizer entered as a `payload` JSON blob (raw layer names, chosen factions, chosen unit types) plus `created_at`. The source of truth that `custom_layers.materialize_custom_layers()` expands into `layer_cache` rows. | database.py:160-166 |
+| `custom_layers` | Admin-defined maps: one row per `(guild_id, map_name)`, holding only what the organizer entered as a `payload` JSON blob (raw layer names, chosen factions, chosen unit types, optional Steam Workshop URL) plus `created_at`. The source of truth that `custom_layers.materialize_custom_layers()` expands into `layer_cache` rows. | database.py:160-166 |
 | `events` | Per-channel cycles; the whole event (incl. `suggestions`, `selected_for_vote`, votes, `winning_layer`, per-event `config`) lives in the `event_data` JSON blob. Indexed on `(guild_id, status)` and `(guild_id, channel_id, status)`. Multiple active events per channel allowed. | database.py:168-181 |
 | `voting_history` | Completed events: `all_suggestions` (JSON), `winning_layer` (JSON, nullable), `completed_at`. | database.py:183-193 |
 
@@ -164,12 +164,12 @@ Per source, `_build_faction_meta_map` (bot.py:295) parses the `Units` block into
 
 **Refresh is not periodic.** Startup auto-fetch fires **only when the cache is empty** (`on_ready`, gated on `get_layer_cache_count() == 0`); otherwise the cache persists across restarts and is updated only on demand via `/refresh_layers`.
 
-**SquadCalc integration** (utils.py:55-275): `build_squadcalc_url` produces a parameterized SquadCalc deep link **only for `source == "main"`** (the SquadCalc-compatible source). For SPM/SU/supermod layers, `build_map_icon_markdown` renders the 🗺️ icon as a masked link to a no-op Discord URL carrying just a hover tooltip (map + version + full faction names) rather than 404-ing on SquadCalc. When `SQUADCALC_BASE_URL` is empty, main-source layers fall back to a plain emoji.
+**SquadCalc integration** (utils.py:55-275): `build_squadcalc_url` produces a parameterized SquadCalc deep link **only for `source == "main"`** (the SquadCalc-compatible source). For SPM/SU/supermod layers, `build_map_icon_markdown` renders the 🗺️ icon as a masked link to a no-op Discord URL carrying just a hover tooltip (map + version + full faction names) rather than 404-ing on SquadCalc. When `SQUADCALC_BASE_URL` is empty, main-source layers fall back to a plain emoji. A suggestion carrying a `workshop_url` (custom maps only, see below) outranks both: the icon points at the mod's Steam Workshop page, since SquadCalc has no data for admin-defined maps.
 
 **Custom (admin-defined) maps** (`bot/custom_layers.py`): `custom_layers` is the
 source of truth for maps an organizer entered by hand; its `payload` holds
-only what was typed or picked — raw layer names plus the chosen factions and
-unit types. `materialize_custom_layers()` expands those rows into ordinary
+only what was typed or picked — raw layer names, the chosen factions and
+unit types, and an optional Steam Workshop URL. `materialize_custom_layers()` expands those rows into ordinary
 `layer_cache` rows tagged `custom:<guild_id>`, re-deriving gamemode, version
 and faction/unit metadata each time from a reference source
 (`resolve_reference_source()`, which prefers the SquadCalc-compatible `main`

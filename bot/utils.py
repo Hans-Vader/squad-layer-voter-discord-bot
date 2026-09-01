@@ -363,8 +363,13 @@ def build_map_icon_markdown(suggestion: dict) -> str:
     The hover tooltip — map + version + full faction names — is identical
     across sources. Falls back to a plain emoji when no URL is available
     (e.g. SquadCalc disabled and main source).
+
+    A custom map with a Steam Workshop link wins over both: SquadCalc has no
+    data for admin-defined maps, so the icon points at the mod instead.
     """
-    url = build_squadcalc_url(suggestion) or _fallback_icon_url(suggestion)
+    url = (suggestion.get("workshop_url")
+           or build_squadcalc_url(suggestion)
+           or _fallback_icon_url(suggestion))
     if not url:
         return "🗺️"
     return f'[🗺️]({url} "{_build_layer_tooltip(suggestion)}")'

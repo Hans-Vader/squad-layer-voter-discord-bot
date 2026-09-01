@@ -544,3 +544,72 @@ def test_colliding_map_name_is_none_when_nothing_was_fetched(temp_db):
 def test_colliding_map_name_tolerates_blank_input(temp_db):
     _seed_layer(temp_db, "AlBasrah_AAS_v1", "main", "Al Basrah", "AAS")
     assert cl.colliding_map_name("   ") is None
+
+
+# ── Steam Workshop link ──────────────────────────────────────────────────────
+
+WORKSHOP = "https://steamcommunity.com/sharedfiles/filedetails/?id=3025678901"
+
+
+@pytest.mark.parametrize("entered", [
+    WORKSHOP,
+    "http://steamcommunity.com/sharedfiles/filedetails/?id=3025678901",
+    "https://www.steamcommunity.com/sharedfiles/filedetails/?id=3025678901",
+    "https://steamcommunity.com/workshop/filedetails/?id=3025678901",
+    "https://steamcommunity.com/sharedfiles/filedetails?id=3025678901",
+    # Steam prepends snr= from a browse page and l= from the language switcher,
+    # so id= is not always the first query parameter.
+    "https://steamcommunity.com/sharedfiles/filedetails/?snr=1_5_9__405&id=3025678901",
+    "https://steamcommunity.com/sharedfiles/filedetails/?l=german&id=3025678901",
+    # Tracking junk and a quote that would otherwise break the masked link.
+    'https://steamcommunity.com/sharedfiles/filedetails/?id=3025678901&searchtext="x',
+    "  " + WORKSHOP + "  ",
+])
+def test_normalize_workshop_url_rebuilds_canonical_url(entered):
+    assert cl.normalize_workshop_url(entered) == WORKSHOP
+
+
+@pytest.mark.parametrize("blank", [None, "", "   "])
+def test_normalize_workshop_url_empty_is_none(blank):
+    assert cl.normalize_workshop_url(blank) is None
+
+
+@pytest.mark.parametrize("bad", [
+    "https://example.com/mod/123",
+    "https://steamcommunity.com/sharedfiles/filedetails/",
+    "steamcommunity.com/app/393380",
+    "3025678901",
+    "javascript:alert(1)",
+    # Host spoofing: the pattern is anchored, so neither a suffixed host nor
+    # the real host appearing in a path is enough.
+    "https://steamcommunity.com.evil.com/sharedfiles/filedetails/?id=1",
+    "https://evil.com/steamcommunity.com/sharedfiles/filedetails/?id=1",
+    # id= must be a parameter of its own, and numeric.
+    "https://steamcommunity.com/sharedfiles/filedetails/?myid=1",
+    "https://steamcommunity.com/sharedfiles/filedetails/?id=abc",
+    # Non-ASCII digits would template into a dead link.
+    "https://steamcommunity.com/sharedfiles/filedetails/?id=١٢٣",
+])
+def test_normalize_workshop_url_rejects_non_workshop_links(bad):
+    with pytest.raises(cl.CustomLayerError) as e:
+        cl.normalize_workshop_url(bad)
+    assert e.value.key == "custom_map.err_bad_workshop_url"
+
+
+def test_save_custom_map_stores_workshop_url(temp_db):
+    _seed_layer(temp_db, "AlBasrah_AAS_v1", "main", "Al Basrah", "AAS",
+                factions=[{"factionId": "USA", "factionName": "United States",
+                           "defaultUnit": "USA_LO_CombinedArms",
+                           "availableOnTeams": [1, 2],
+                           "unitTypes": [{"type": "CombinedArms"}],
+                           "alliance": "BLUFOR"}])
+    cl.save_custom_map(1, "Belaya", ["Belaya_TC_v1"], [], [], WORKSHOP)
+
+    assert cl.workshop_url_for(1, "Belaya") == WORKSHOP
+    assert cl.workshop_url_for(1, "Kokan") is None
+    assert cl.workshop_url_for(2, "Belaya") is None
+
+
+def test_save_custom_map_without_workshop_url(temp_db):
+    cl.save_custom_map(1, "Belaya", ["Belaya_TC_v1"], [], [])
+    assert cl.workshop_url_for(1, "Belaya") is None

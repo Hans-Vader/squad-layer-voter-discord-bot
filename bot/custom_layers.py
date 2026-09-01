@@ -35,6 +35,22 @@ _LAYER_RE = re.compile(r"^[A-Za-z0-9]+(?:_[A-Za-z0-9.]+)+$")
 _VERSION_RE = re.compile(r"^v\d+$")
 _BULLET_RE = re.compile(r"^[-*•]\s+")
 
+# Steam Workshop links: only the numeric item id is trusted and the URL is
+# rebuilt from it. That drops tracking parameters and — more importantly —
+# guarantees the result carries no `"`, which would break both the masked link
+# and its quoted tooltip in utils.build_map_icon_markdown.
+#
+# `id` need not be the first query parameter: Steam prepends `snr=` on links
+# followed from a browse page and `l=` from the language switcher, and those
+# are what an admin copies out of the address bar. `[0-9]` rather than `\d`,
+# which would also accept non-ASCII digits and template them into a dead link.
+_WORKSHOP_ID_RE = re.compile(
+    r"^(?:https?://)?(?:www\.)?steamcommunity\.com/(?:sharedfiles|workshop)"
+    r"/filedetails/?\?(?:[^#]*&)?id=([0-9]+)", re.IGNORECASE)
+_WORKSHOP_URL_TEMPLATE = "https://steamcommunity.com/sharedfiles/filedetails/?id={}"
+# Room for a long `snr=` prefix in front of the id.
+MAX_WORKSHOP_URL_LENGTH = 300
+
 
 class CustomLayerError(Exception):
     """Input rejected. `key` is an i18n key, `params` its format arguments."""
@@ -126,6 +142,33 @@ def normalize_map_name(value: str, fallback: str) -> str:
     """Display name for the map: the admin's input, else the parsed token."""
     name = (value or "").strip()[:MAX_MAP_NAME_LENGTH]
     return name or fallback
+
+
+def normalize_workshop_url(value: Optional[str]) -> Optional[str]:
+    """Canonical Steam Workshop URL for the map, or None when left empty.
+
+    Raises CustomLayerError for anything that is not a Workshop link — an
+    arbitrary URL would silently send voters somewhere else from the 🗺️ icon.
+    """
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    match = _WORKSHOP_ID_RE.match(raw)
+    if not match:
+        raise CustomLayerError("custom_map.err_bad_workshop_url")
+    return _WORKSHOP_URL_TEMPLATE.format(match.group(1))
+
+
+def workshop_url_for(guild_id: int, map_name: str) -> Optional[str]:
+    """The stored Workshop URL of one custom map, or None if it has none.
+
+    Read at suggestion time, not at render time: the URL travels on the stored
+    suggestion so utils can render the icon without a database lookup.
+    """
+    for entry in db.get_custom_maps(guild_id):
+        if entry["map_name"] == map_name:
+            return (entry.get("payload") or {}).get("workshop_url")
+    return None
 
 
 def resolve_reference_source() -> Optional[str]:
@@ -276,7 +319,8 @@ def materialize_custom_layers(guild_id: Optional[int] = None,
 
 
 def save_custom_map(guild_id: int, map_name: str, raw_names: list[str],
-                    faction_ids: list[str], unit_types: list[str]) -> int:
+                    faction_ids: list[str], unit_types: list[str],
+                    workshop_url: Optional[str] = None) -> int:
     """Store one custom map and materialize it. Returns layers actually cached.
 
     The cached rows are dropped first so a re-save that removes a layer doesn't
@@ -286,6 +330,7 @@ def save_custom_map(guild_id: int, map_name: str, raw_names: list[str],
         "layers": list(raw_names),
         "factions": list(faction_ids),
         "units": list(unit_types),
+        "workshop_url": workshop_url,
     })
     db.delete_layers(db.custom_source(guild_id), map_name)
     # Narrowed to this one map — a save answers a Discord interaction and

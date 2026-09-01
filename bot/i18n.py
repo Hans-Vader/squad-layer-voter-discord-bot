@@ -966,6 +966,20 @@ _STRINGS: dict[str, dict[str, str]] = {
         "de": "Anzeigename (optional)",
         "en": "Display name (optional)",
     },
+    "custom_map.field_workshop_url": {
+        "de": "Steam-Workshop-Link (optional)",
+        "en": "Steam Workshop link (optional)",
+    },
+    "custom_map.field_workshop_hint": {
+        "de": "https://steamcommunity.com/sharedfiles/filedetails/?id=123456789",
+        "en": "https://steamcommunity.com/sharedfiles/filedetails/?id=123456789",
+    },
+    "custom_map.err_bad_workshop_url": {
+        "de": "Kein Steam-Workshop-Link. Erwartet: "
+              "https://steamcommunity.com/sharedfiles/filedetails/?id=123456789",
+        "en": "Not a Steam Workshop link. Expected: "
+              "https://steamcommunity.com/sharedfiles/filedetails/?id=123456789",
+    },
     "custom_map.details_title": {
         "de": "Fraktionen & Unit-Typen",
         "en": "Factions & Unit Types",
