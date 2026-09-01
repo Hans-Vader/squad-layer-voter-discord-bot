@@ -348,10 +348,14 @@ def _build_layer_tooltip(suggestion: dict) -> str:
     return text.replace('"', "'")
 
 
-# No-op masked-link target used to attach a hover tooltip to the 🗺 icon for
-# non-main-source layers — Discord requires a URL on masked links, but we
-# don't want to send users to SquadCalc since it doesn't recognize SPM/SU
-# maps or factions. discord.com keeps the click inside the user's Discord.
+# Masked-link target for layers SquadCalc cannot resolve. Discord requires a
+# URL on a masked link, and this one exists only to hang the hover tooltip on
+# the 🗺 icon — "no-op" means it carries no layer, not that it does not
+# navigate: the click opens SquadCalc's bare homepage. That is deliberate.
+# Sending the layer's params would be worse than a dead end, because an
+# unrecognized map makes SquadCalc open a random one instead of failing
+# (squadCalc.js:489-493), and SPM/SU maps and factions are not in its list.
+# build_event_embed's footer counts this target as no destination at all.
 _TOOLTIP_NOOP_URL = SQUADCALC_BASE_URL
 
 
@@ -359,7 +363,8 @@ def build_map_icon_markdown(suggestion: dict) -> str:
     """Render the 🗺️ map icon for embeds.
 
     Both main and SPM/SU layers go through the same link template; only the
-    URL target differs (SquadCalc when usable, a no-op Discord URL otherwise).
+    URL target differs (a SquadCalc deep link when usable, its bare homepage
+    otherwise — see _TOOLTIP_NOOP_URL).
     The hover tooltip — map + version + full faction names — is identical
     across sources. Falls back to a plain emoji when no URL is available
     (e.g. SquadCalc disabled and main source).
@@ -954,8 +959,8 @@ def build_event_embed(event: dict, settings: dict, db_id: int,
                 )
 
     # Footer: says where the 🗺️ icons on THIS board actually lead, derived
-    # from the same precedence build_map_icon_markdown applies. A no-op
-    # tooltip link is no destination, so a board with nothing clickable gets
+    # from the same precedence build_map_icon_markdown applies. A tooltip-only
+    # link is no destination, so a board with nothing clickable gets
     # no footer at all rather than a claim that does not hold. The SuperMod
     # legend used to occupy this slot; it lives in the Info panel now, which
     # has room for every abbreviation instead of just one line.
