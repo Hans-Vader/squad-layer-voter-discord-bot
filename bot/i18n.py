@@ -946,6 +946,10 @@ _STRINGS: dict[str, dict[str, str]] = {
         "de": "{count} Layer",
         "en": "{count} layers",
     },
+    "custom_map.layer_count_pack": {
+        "de": "{count} Layer auf {maps} Karten",
+        "en": "{count} layers on {maps} maps",
+    },
     "custom_map.none": {
         "de": "Noch keine eigenen Maps angelegt.",
         "en": "No custom maps yet.",
@@ -1086,6 +1090,12 @@ _STRINGS: dict[str, dict[str, str]] = {
               "Namen, oder lösche die andere Map zuerst.",
         "en": "**{map}** is already a custom map. Pick another name, or "
               "delete that map first.",
+    },
+    "custom_map.err_layer_taken": {
+        "de": "**{layer}** gehört schon zu **{entry}**. Entferne den Layer "
+              "dort zuerst, oder bearbeite **{entry}**.",
+        "en": "**{layer}** already belongs to **{entry}**. Remove it there "
+              "first, or edit **{entry}** instead.",
     },
     "custom_map.err_not_found": {
         "de": "**{map}** gibt es nicht mehr — die Liste war veraltet.",

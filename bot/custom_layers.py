@@ -155,6 +155,12 @@ def is_pack(layers: list[dict]) -> bool:
     return bool(layers) and "variant" in layers[0]
 
 
+def pack_map_count(raw_names: list[str], map_tokens: dict[str, str]) -> int:
+    """How many stock maps a pack's layers sit on."""
+    return len({layer["map_name"] for name in raw_names
+                if (layer := split_pack_name(name, map_tokens))})
+
+
 def parse_custom_layers(text: str, map_tokens: Optional[dict[str, str]] = None
                         ) -> tuple[str, list[dict]]:
     """Parse the paste box into a name and its layers.

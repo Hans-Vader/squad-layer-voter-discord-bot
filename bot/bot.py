@@ -2511,7 +2511,8 @@ class CustomMapsView(AutoDisableView):
     misclick in a dropdown is a cheap way to lose both.
     """
 
-    def __init__(self, lang: str, db_id: int, maps: list[dict]):
+    def __init__(self, lang: str, db_id: int, maps: list[dict],
+                 counts: Optional[dict[str, str]] = None):
         super().__init__(timeout=120)
         self.lang = lang
         self.db_id = db_id
@@ -2531,10 +2532,11 @@ class CustomMapsView(AutoDisableView):
             # objects, or a default set on one would show up on the other.
             def map_options():
                 return [
-                    discord.SelectOption(label=m["map_name"][:100],
-                                         value=m["map_name"][:100],
-                                         description=t("custom_map.layer_count", lang,
-                                                       count=len(m["payload"].get("layers") or []))[:100])
+                    discord.SelectOption(
+                        label=m["map_name"][:100], value=m["map_name"][:100],
+                        description=((counts or {}).get(m["map_name"])
+                                     or t("custom_map.layer_count", lang,
+                                          count=len(m["payload"].get("layers") or [])))[:100])
                     for m in maps[:25]
                 ]
 
@@ -2614,18 +2616,41 @@ class CustomMapsView(AutoDisableView):
         await handle_admin_panel(interaction, self.db_id, edit=True)
 
 
+def _custom_entry_counts(maps: list[dict], lang: str) -> dict[str, str]:
+    """{entry name: "3 layers" | "16 layers on 12 maps"} for the panel.
+
+    A pack's map count is re-derived from its raw names; with no reference
+    source cached it honestly reads 0 — nothing is materialized either.
+    """
+    map_tokens: dict[str, str] = {}
+    if any(m["payload"].get("pack") for m in maps):
+        source = custom_layers.resolve_reference_source()
+        map_tokens = custom_layers.build_map_token_map(source) if source else {}
+    counts = {}
+    for m in maps:
+        layers = m["payload"].get("layers") or []
+        if m["payload"].get("pack"):
+            counts[m["map_name"]] = t(
+                "custom_map.layer_count_pack", lang, count=len(layers),
+                maps=custom_layers.pack_map_count(layers, map_tokens))
+        else:
+            counts[m["map_name"]] = t("custom_map.layer_count", lang,
+                                      count=len(layers))
+    return counts
+
+
 async def _render_custom_maps(interaction: discord.Interaction, db_id: int,
                               lang: str, notice: str = ""):
     """Draw (or redraw) the Custom Maps sub-panel over the current message."""
     maps = db.get_custom_maps(interaction.guild_id)
+    counts = _custom_entry_counts(maps, lang)
 
     if maps:
         lines = [
             "• **{}**{} — {}".format(
                 m["map_name"],
                 " 🔗" if m["payload"].get("workshop_url") else "",
-                t("custom_map.layer_count", lang,
-                  count=len(m["payload"].get("layers") or [])))
+                counts[m["map_name"]])
             for m in maps
         ]
         body = "\n".join(lines)
@@ -2642,7 +2667,7 @@ async def _render_custom_maps(interaction: discord.Interaction, db_id: int,
         description=f"{notice}\n\n{body}" if notice else body,
         color=discord.Color.dark_red(),
     )
-    view = CustomMapsView(lang, db_id, maps)
+    view = CustomMapsView(lang, db_id, maps, counts)
     await interaction.response.edit_message(embed=embed, view=_bind(view, interaction))
 
 
@@ -2708,9 +2733,14 @@ class CustomMapModal(ui.Modal):
         self.add_item(self.workshop_input)
 
     async def on_submit(self, interaction: discord.Interaction):
+        # Mod layers find their stock map through the reference source's raw
+        # names, so it is resolved before parsing. Without one every line
+        # reads as a classic map, and the refusal below still fires.
+        source = custom_layers.resolve_reference_source()
+        map_tokens = custom_layers.build_map_token_map(source) if source else {}
         try:
             map_token, layers = custom_layers.parse_custom_layers(
-                str(self.layers_input.value))
+                str(self.layers_input.value), map_tokens)
             workshop_url = custom_layers.normalize_workshop_url(
                 str(self.workshop_input.value))
         except custom_layers.CustomLayerError as e:
@@ -2722,7 +2752,6 @@ class CustomMapModal(ui.Modal):
 
         # A select with zero options is rejected by Discord, so an unusable
         # reference source is refused here rather than at render time.
-        source = custom_layers.resolve_reference_source()
         faction_ids = sorted(db.get_faction_reference([source])) if source else []
         unit_types = db.get_unique_unit_types([source]) if source else []
         if not faction_ids or not unit_types:
@@ -2733,15 +2762,18 @@ class CustomMapModal(ui.Modal):
                 ephemeral=True)
             return
 
+        pack = custom_layers.is_pack(layers)
         map_name = custom_layers.normalize_map_name(
             str(self.name_input.value), map_token)
 
         # Only when the name is actually changing. A fetched map that appears
         # after this custom map was created would otherwise make every edit of
         # it impossible, including edits that never touch the name, leaving the
-        # admin no way out but delete-and-re-add.
+        # admin no way out but delete-and-re-add. A pack's name only labels it
+        # in this panel — its layers sit on stock maps — so there is no map
+        # name for the blacklist to confuse.
         clash = (custom_layers.colliding_map_name(map_name)
-                 if map_name != self.original_name else None)
+                 if not pack and map_name != self.original_name else None)
         if clash:
             await interaction.response.send_message(
                 embed=discord.Embed(
@@ -2770,11 +2802,24 @@ class CustomMapModal(ui.Modal):
                 ephemeral=True)
             return
 
+        claimed = custom_layers.claimed_layer(
+            interaction.guild_id, [layer["raw_name"] for layer in layers],
+            {self.original_name, map_name})
+        if claimed:
+            await interaction.response.send_message(
+                embed=discord.Embed(
+                    description=t("custom_map.err_layer_taken", self.lang,
+                                  layer=claimed[0], entry=claimed[1]),
+                    color=discord.Color.red()),
+                ephemeral=True)
+            return
+
         view = CustomMapDetailsView(self.lang, self.db_id, map_name, layers,
                                     faction_ids, unit_types, workshop_url,
                                     original_name=self.original_name,
                                     preselected_factions=self.preselected_factions,
-                                    preselected_units=self.preselected_units)
+                                    preselected_units=self.preselected_units,
+                                    pack=pack)
         embed = discord.Embed(
             title=t("custom_map.details_title", self.lang),
             description=t("custom_map.details_desc", self.lang,
@@ -2811,7 +2856,8 @@ class CustomMapDetailsView(AutoDisableView):
                  workshop_url: Optional[str] = None,
                  original_name: Optional[str] = None,
                  preselected_factions: Optional[list[str]] = None,
-                 preselected_units: Optional[list[str]] = None):
+                 preselected_units: Optional[list[str]] = None,
+                 pack: bool = False):
         super().__init__(timeout=300)
         self.lang = lang
         self.db_id = db_id
@@ -2819,6 +2865,7 @@ class CustomMapDetailsView(AutoDisableView):
         self.layers = layers
         self.workshop_url = workshop_url
         self.original_name = original_name
+        self.pack = pack
         self.selected_factions: list[str] = list(preselected_factions or [])
         self.selected_units: list[str] = list(preselected_units or [])
         self.truncated = len(faction_ids) > 25 or len(unit_types) > 25
@@ -2871,7 +2918,8 @@ class CustomMapDetailsView(AutoDisableView):
         written = custom_layers.save_custom_map(
             interaction.guild_id, self.map_name,
             [layer["raw_name"] for layer in self.layers],
-            self.selected_factions, self.selected_units, self.workshop_url)
+            self.selected_factions, self.selected_units, self.workshop_url,
+            pack=self.pack)
 
         if written == 0:
             # Nothing reached the cache — materialization needs a fetched source
