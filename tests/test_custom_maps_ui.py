@@ -621,3 +621,33 @@ def test_map_step_keeps_stock_maps_out_of_the_custom_dropdown(temp_db):
     assert [o.value for o in custom.options] == ["Belaya"]
     offered = sorted(o.value for s in selects for o in s.options)
     assert offered == ["Al Basrah", "Belaya", "Chora", "Narva"]
+
+
+def test_editing_a_pack_is_refused_while_its_stock_maps_are_missing(temp_db):
+    # main failed to fetch and supermod stands in as the reference: it cannot
+    # place SEC names on a stock map, so the lines parse as one classic map.
+    # Saving that would turn the pack into a map called "SEC 26" for good.
+    _seed_stock_maps(temp_db)
+    cl.save_custom_map(1, "SEC 26", ["SEC_26_Chora_AAS_v2", "SEC_26_Narva_AAS_v1"],
+                       [], [], pack=True)
+    entry = temp_db.get_custom_maps(1)[0]
+    temp_db.clear_layer_cache()
+    for token in ("Chora", "Narva"):
+        temp_db.upsert_layer(
+            raw_name=f"SPM_{token}_AAS_v1", source="supermod",
+            map_name=f"SPM | {token}", map_id=token.lower(), gamemode="AAS",
+            layer_version="v1",
+            factions=[{"factionId": "USA", "factionName": "United States Army",
+                       "defaultUnit": "USA_LO_CombinedArms", "alliance": "BLUFOR",
+                       "availableOnTeams": [1, 2],
+                       "unitTypes": [{"type": "CombinedArms", "name": "CombinedArms"}]}],
+            team1_alliances=[], team2_alliances=[], map_size_km=None,
+        )
+
+    interaction = _submit(botmod.CustomMapModal("en", 1, entry=entry),
+                          "SEC_26_Chora_AAS_v2\nSEC_26_Narva_AAS_v1", name="SEC 26")
+
+    assert interaction.response.edited is None
+    assert interaction.response.sent["embed"].description == t(
+        "custom_map.err_pack_unplaceable", "en")
+    assert temp_db.get_custom_maps(1)[0]["payload"]["pack"] is True

@@ -1070,6 +1070,14 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "These layers on stock maps have no game mode in their name: "
               "{lines}",
     },
+    "custom_map.err_pack_unplaceable": {
+        "de": "Die bestehenden Karten dieses Packs fehlen gerade in den "
+              "Layer-Daten, deshalb kann er nicht gespeichert werden. Führe "
+              "`/refresh_layers` aus und versuche es dann erneut.",
+        "en": "This pack's stock maps are missing from the layer data right "
+              "now, so it can't be saved. Run `/refresh_layers`, then try "
+              "again.",
+    },
     "custom_map.err_mixed_kinds": {
         "de": "Diese Zeilen gehören zu keiner bestehenden Karte: {lines}. "
               "Layer für bestehende Karten und eine eigene Map bitte getrennt "

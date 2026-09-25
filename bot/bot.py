@@ -2768,6 +2768,8 @@ class CustomMapModal(ui.Modal):
         payload = (entry or {}).get("payload") or {}
         self.preselected_factions = list(payload.get("factions") or [])
         self.preselected_units = list(payload.get("units") or [])
+        # A pack stays a pack: see the refusal in on_submit.
+        self.original_pack = bool(payload.get("pack"))
 
         self.layers_input = ui.TextInput(
             label=t("custom_map.field_layers", lang)[:45],
@@ -2827,6 +2829,19 @@ class CustomMapModal(ui.Modal):
             return
 
         pack = custom_layers.is_pack(layers)
+        if self.original_pack and not pack:
+            # The stored pack's lines no longer place on a stock map — the
+            # reference source lacks those maps, typically because main failed
+            # to fetch and another source stands in. Saving now would turn the
+            # pack into one classic map named after it, and that would not heal
+            # once main is back.
+            await interaction.response.send_message(
+                embed=discord.Embed(
+                    description=t("custom_map.err_pack_unplaceable", self.lang),
+                    color=discord.Color.red()),
+                ephemeral=True)
+            return
+
         map_name = custom_layers.normalize_map_name(
             str(self.name_input.value), map_token)
 
