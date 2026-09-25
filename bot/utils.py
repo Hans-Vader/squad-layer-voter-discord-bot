@@ -187,6 +187,24 @@ def check_role_gate(event: dict, user) -> bool:
 # Layer formatting
 # ---------------------------------------------------------------------------
 
+def format_mode(gamemode: str, version: Optional[str],
+                variant: Optional[str] = None, compact: bool = False) -> str:
+    """Gamemode and version — "AAS v2" — led by a mod layer's variant:
+    "SEC 26 · AAS v2".
+
+    `compact` is the poll-answer form, where every character counts against
+    Discord's 55-char limit: "AASv2", "SEC26 AASv2". The variant leads so the
+    truncation in format_layer_poll_option cuts the factions, not the part
+    that tells two layers on the same map apart. Without a variant the
+    output is exactly what every call site built by hand before.
+    """
+    if compact:
+        mode = f"{gamemode}{version}".strip() if version else gamemode
+        return f"{variant.replace(' ', '')} {mode}" if variant else mode
+    mode = f"{gamemode} {version}".strip() if version else gamemode
+    return f"{variant} · {mode}" if variant else mode
+
+
 def format_layer_short(suggestion: dict) -> str:
     """Format a layer suggestion as a short one-line string.
 
@@ -200,7 +218,7 @@ def format_layer_short(suggestion: dict) -> str:
     t2_faction = suggestion.get("team2_faction", "?")
     t2_unit = suggestion.get("team2_unit", "?")
 
-    mode_str = f"{gamemode} {version}".strip() if version else gamemode
+    mode_str = format_mode(gamemode, version, suggestion.get("layer_variant"))
     return f"{map_name} {mode_str} — {t1_faction}/{t1_unit} vs {t2_faction}/{t2_unit}"
 
 
@@ -337,7 +355,7 @@ def _build_layer_tooltip(suggestion: dict) -> str:
     map_name = suggestion.get("map_name", "?")
     gamemode = suggestion.get("gamemode", "?")
     version = suggestion.get("layer_version", "")
-    mode_str = f"{gamemode} {version}".strip() if version else gamemode
+    mode_str = format_mode(gamemode, version, suggestion.get("layer_variant"))
 
     t1_name = suggestion.get("team1_faction_name") or suggestion.get("team1_faction") or "?"
     t2_name = suggestion.get("team2_faction_name") or suggestion.get("team2_faction") or "?"
@@ -409,7 +427,7 @@ def format_suggestion_entry(index: int, suggestion: dict,
     version = suggestion.get("layer_version", "")
     user_name = suggestion.get("user_name", "?")
 
-    mode_str = f"{gm_short} {version}".strip() if version else gm_short
+    mode_str = format_mode(gm_short, version, suggestion.get("layer_variant"))
 
     map_icon = build_map_icon_markdown(suggestion)
 
@@ -532,7 +550,7 @@ def format_layer_poll_option(suggestion: dict) -> str:
     t2_unit = _UNIT_ABBREV.get(suggestion.get("team2_unit", "?"), suggestion.get("team2_unit", "?"))
 
     gm_short = _GAMEMODE_ABBREV.get(gamemode, gamemode)
-    mode_str = f"{gm_short}{version}".strip() if version else gm_short
+    mode_str = format_mode(gm_short, version, suggestion.get("layer_variant"), compact=True)
     text = f"{map_name} {mode_str} {t1_faction}({t1_unit}) vs {t2_faction}({t2_unit})"
     if len(text) > 55:
         text = text[:52] + "..."
@@ -570,8 +588,13 @@ def build_ping_messages(role_ids: list, user_ids: list, header: str,
 
 
 def suggestion_matches(s1: dict, s2: dict) -> bool:
-    """Check if two suggestions represent the exact same layer combination."""
-    keys = ("map_name", "gamemode", "layer_version",
+    """Check if two suggestions represent the exact same layer combination.
+
+    `layer_variant` tells a mod layer from the vanilla layer of the same map,
+    mode and version. Rows stored before it existed have none, and neither
+    does a vanilla pick, so those keep matching each other.
+    """
+    keys = ("map_name", "gamemode", "layer_version", "layer_variant",
             "team1_faction", "team1_unit", "team2_faction", "team2_unit")
     return all(s1.get(k) == s2.get(k) for k in keys)
 
@@ -670,7 +693,7 @@ def build_winner_copy_text(event: dict, lang: str = "en") -> Optional[str]:
     map_name = winner.get("map_name", "?")
     gamemode = winner.get("gamemode", "?")
     version = winner.get("layer_version", "")
-    mode_str = f"{gamemode} {version}".strip() if version else gamemode
+    mode_str = format_mode(gamemode, version, winner.get("layer_variant"))
     t1u = winner.get("team1_unit", "?")
     t2u = winner.get("team2_unit", "?")
 
@@ -913,7 +936,7 @@ def build_event_embed(event: dict, settings: dict, db_id: int,
             t1u = winner.get("team1_unit", "?")
             t2u = winner.get("team2_unit", "?")
 
-            mode_str = f"{gamemode} {version}".strip() if version else gamemode
+            mode_str = format_mode(gamemode, version, winner.get("layer_variant"))
 
             map_icon = build_map_icon_markdown(winner)
 

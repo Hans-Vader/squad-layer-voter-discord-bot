@@ -32,7 +32,7 @@ MAX_LAYERS_PER_MAP = 25
 MAX_MAP_NAME_LENGTH = 50
 
 _LAYER_RE = re.compile(r"^[A-Za-z0-9]+(?:_[A-Za-z0-9.]+)+$")
-_VERSION_RE = re.compile(r"^v\d+$")
+_VERSION_RE = re.compile(r"^v\d+$", re.IGNORECASE)
 _BULLET_RE = re.compile(r"^[-*•]\s+")
 
 # Steam Workshop links: only the numeric item id is trusted and the URL is
@@ -89,39 +89,126 @@ def split_raw_name(raw_name: str) -> tuple[str, str, Optional[str]]:
     mode_idx = 1
     for i, part in enumerate(parts[1:], start=1):
         if _VERSION_RE.match(part):
-            version = part
+            version = part.lower()
             mode_idx = i - 1
             break
     mode_token = parts[mode_idx] if 0 < mode_idx < len(parts) else ""
     return parts[0], mode_token, version
 
 
-def parse_custom_layers(text: str) -> tuple[str, list[dict]]:
-    """Parse the paste box into a map token and its layers.
+def build_map_token_map(source: str) -> dict[str, str]:
+    """{lowercased raw-name map token: map name}, derived from the cache.
 
-    Returns (map_token, [{"raw_name", "gamemode_token", "layer_version"}]).
+    Main-game raw names lead with their map's token — "FoolsRoad_AAS_v1" is
+    Fool's Road — which is how SEC_36_FoolsRoad_AAS_v1 finds its stock map
+    without a hardcoded table. A token leading the raw names of more than one
+    map ("SPM" in SuperMod) says nothing reliable and is dropped.
+    """
+    maps: dict[str, set[str]] = {}
+    for map_name, raw_name in db.get_map_raw_names([source]):
+        maps.setdefault(raw_name.split("_")[0].lower(), set()).add(map_name)
+    return {token: names.pop() for token, names in maps.items() if len(names) == 1}
+
+
+def split_pack_name(raw_name: str, map_tokens: dict[str, str]) -> Optional[dict]:
+    """Place a mod layer on its stock map, or None when it names none.
+
+    "SEC_26_Chora_AAS_v2" → {"raw_name", "map_name": "Chora",
+    "gamemode_token": "AAS", "layer_version": "v2", "variant": "SEC 26"}.
+
+    The stock-map token is searched from the second token on: a name starting
+    with one ("Chora_AAS_v1") is shaped like a main-game layer and stays a
+    classic custom map. The mode is the token in front of the version (or the
+    one after the map when there is no version); the variant is every token
+    that is neither map, mode nor version, so two different raw names can
+    never render alike. An empty gamemode_token means the name carries no
+    mode at all (Rivals_W1_FoolsRoad).
+    """
+    parts = raw_name.split("_")
+    for i in range(1, len(parts)):
+        map_name = map_tokens.get(parts[i].lower())
+        if map_name is None:
+            continue
+        version_idx = next((j for j in range(i + 1, len(parts))
+                            if _VERSION_RE.match(parts[j])), None)
+        if version_idx is None:
+            mode_idx = i + 1 if i + 1 < len(parts) else None
+        else:
+            mode_idx = version_idx - 1 if version_idx - 1 > i else None
+        used = {i, mode_idx, version_idx}
+        return {
+            "raw_name": raw_name,
+            "map_name": map_name,
+            "gamemode_token": parts[mode_idx] if mode_idx is not None else "",
+            "layer_version": (parts[version_idx].lower()
+                              if version_idx is not None else None),
+            "variant": " ".join(p for k, p in enumerate(parts) if k not in used),
+        }
+    return None
+
+
+def is_pack(layers: list[dict]) -> bool:
+    """Whether parsed layers are mod layers on stock maps, not a map of their own.
+
+    parse_custom_layers never mixes the two kinds, so the first layer decides.
+    """
+    return bool(layers) and "variant" in layers[0]
+
+
+def pack_map_count(raw_names: list[str], map_tokens: dict[str, str]) -> int:
+    """How many stock maps a pack's layers sit on."""
+    return len({layer["map_name"] for name in raw_names
+                if (layer := split_pack_name(name, map_tokens))})
+
+
+def parse_custom_layers(text: str, map_tokens: Optional[dict[str, str]] = None
+                        ) -> tuple[str, list[dict]]:
+    """Parse the paste box into a name and its layers.
+
+    A classic custom map returns (map_token, [{"raw_name", "gamemode_token",
+    "layer_version"}]). Mod layers on stock maps (see split_pack_name) return
+    (first layer's variant, [split_pack_name dicts]) and may span any number
+    of stock maps. `map_tokens` is build_map_token_map's table; without it
+    every line reads as a classic custom map.
+
     Raises CustomLayerError carrying an i18n key for every rejection.
     """
     names = split_layer_lines(text)
     if not names:
         raise CustomLayerError("custom_map.err_empty")
 
-    invalid = [n for n in names if not _LAYER_RE.match(n)]
-
-    # Reject layers with no gamemode token (e.g., "Belaya_v1")
+    packs: dict[str, dict] = {}
+    invalid = []
     for n in names:
-        if n not in invalid:  # only check if not already invalid from regex
-            _, mode_token, _ = split_raw_name(n)
-            if not mode_token:
-                invalid.append(n)
+        if not _LAYER_RE.match(n):
+            invalid.append(n)
+            continue
+        pack = split_pack_name(n, map_tokens) if map_tokens else None
+        if pack is not None:
+            packs[n] = pack
+        elif not split_raw_name(n)[1]:
+            invalid.append(n)  # no gamemode token, e.g. "Belaya_v1"
 
     if invalid:
         raise CustomLayerError("custom_map.err_invalid_lines",
                                lines=", ".join(invalid[:10]))
 
+    no_mode = [n for n, layer in packs.items() if not layer["gamemode_token"]]
+    if no_mode:
+        raise CustomLayerError("custom_map.err_pack_no_mode",
+                               lines=", ".join(no_mode[:10]))
+
     if len(names) > MAX_LAYERS_PER_MAP:
         raise CustomLayerError("custom_map.err_too_many",
                                max=MAX_LAYERS_PER_MAP, count=len(names))
+
+    if packs:
+        classic = [n for n in names if n not in packs]
+        if classic:
+            raise CustomLayerError("custom_map.err_mixed_kinds",
+                                   lines=", ".join(classic[:10]))
+        layers = [packs[n] for n in names]
+        return layers[0]["variant"], layers
 
     layers = []
     tokens: dict[str, str] = {}  # lowercased token → first spelling seen
@@ -165,15 +252,19 @@ def normalize_workshop_url(value: Optional[str]) -> Optional[str]:
     return _WORKSHOP_URL_TEMPLATE.format(match.group(1))
 
 
-def workshop_url_for(guild_id: int, map_name: str) -> Optional[str]:
-    """The stored Workshop URL of one custom map, or None if it has none.
+def workshop_url_for(guild_id: int, raw_name: str) -> Optional[str]:
+    """The Workshop URL of the custom entry listing this raw name, or None.
 
-    Read at suggestion time, not at render time: the URL travels on the stored
-    suggestion so utils can render the icon without a database lookup.
+    By raw name, not map name: a pack's layers sit on stock maps ("Chora")
+    that are not the entry's name ("SEC 26"). Read at suggestion time, not at
+    render time: the URL travels on the stored suggestion so utils can render
+    the icon without a database lookup.
     """
+    wanted = (raw_name or "").lower()
     for entry in db.get_custom_maps(guild_id):
-        if entry["map_name"] == map_name:
-            return (entry.get("payload") or {}).get("workshop_url")
+        payload = entry.get("payload") or {}
+        if any(layer.lower() == wanted for layer in payload.get("layers") or []):
+            return payload.get("workshop_url")
     return None
 
 
@@ -299,6 +390,7 @@ def materialize_custom_layers(guild_id: Optional[int] = None,
     reference = db.get_faction_reference([source])
     all_units = db.get_unique_unit_types([source])
     token_map = build_gamemode_token_map(source)
+    map_tokens = build_map_token_map(source)
 
     written = 0
     for entry in entries:
@@ -307,11 +399,25 @@ def materialize_custom_layers(guild_id: Optional[int] = None,
                                          payload.get("units") or [],
                                          reference, all_units)
         for raw_name in payload.get("layers") or []:
-            _, token, version = split_raw_name(raw_name)
+            if payload.get("pack"):
+                layer = split_pack_name(raw_name, map_tokens)
+                if layer is None or not layer["gamemode_token"]:
+                    # The reference source no longer knows this stock map —
+                    # renamed upstream, or main failed to fetch and another
+                    # source stands in. A guessed map name would rebuild the
+                    # one-map-called-"SEC" mess packs exist to avoid.
+                    logger.warning("Custom pack %r: %s names no cached stock map — skipped",
+                                   entry["map_name"], raw_name)
+                    continue
+                map_name, token = layer["map_name"], layer["gamemode_token"]
+                version, variant = layer["layer_version"], layer["variant"]
+            else:
+                _, token, version = split_raw_name(raw_name)
+                map_name, variant = entry["map_name"], None
             db.upsert_layer(
                 raw_name=raw_name,
                 source=db.custom_source(entry["guild_id"]),
-                map_name=entry["map_name"],
+                map_name=map_name,
                 map_id="",
                 gamemode=token_map.get(token, token),
                 layer_version=version,
@@ -319,38 +425,78 @@ def materialize_custom_layers(guild_id: Optional[int] = None,
                 team1_alliances=[],
                 team2_alliances=[],
                 map_size_km=None,
+                variant=variant,
             )
             written += 1
     return written
 
 
+def _stored_entry(guild_id: int, map_name: str) -> Optional[dict]:
+    """One custom entry of the guild by its exact name, or None."""
+    return next((e for e in db.get_custom_maps(guild_id)
+                 if e["map_name"] == map_name), None)
+
+
+def _drop_cached_rows(guild_id: int, entry: Optional[dict]):
+    """Remove an entry's materialized rows — by raw name, never by map name:
+    a pack spans many stock maps, and two packs can share one."""
+    if entry:
+        db.delete_layers_by_raw_names(db.custom_source(guild_id),
+                                      (entry.get("payload") or {}).get("layers") or [])
+
+
 def save_custom_map(guild_id: int, map_name: str, raw_names: list[str],
                     faction_ids: list[str], unit_types: list[str],
-                    workshop_url: Optional[str] = None) -> int:
-    """Store one custom map and materialize it. Returns layers actually cached.
+                    workshop_url: Optional[str] = None,
+                    pack: bool = False) -> int:
+    """Store one custom entry and materialize it. Returns layers actually cached.
 
-    The cached rows are dropped first so a re-save that removes a layer doesn't
-    leave the old one behind — upsert alone would never delete it.
+    The entry's previous rows are dropped first so a re-save that removes a
+    layer doesn't leave the old one behind — upsert alone would never delete
+    it. `pack` marks mod layers on stock maps (see split_pack_name); it is
+    stored so a pack whose stock maps stop resolving is skipped instead of
+    being re-read as a map of its own.
     """
+    _drop_cached_rows(guild_id, _stored_entry(guild_id, map_name))
     db.upsert_custom_map(guild_id, map_name, {
         "layers": list(raw_names),
         "factions": list(faction_ids),
         "units": list(unit_types),
         "workshop_url": workshop_url,
+        "pack": pack,
     })
-    db.delete_layers(db.custom_source(guild_id), map_name)
-    # Narrowed to this one map — a save answers a Discord interaction and
+    # Narrowed to this one entry — a save answers a Discord interaction and
     # cannot afford to rewrite every map of the guild (see
-    # materialize_custom_layers). It also silently writes nothing when no
-    # reference source is cached, so report what actually reached the cache.
-    materialize_custom_layers(guild_id, map_name)
-    return db.count_layers(db.custom_source(guild_id), map_name)
+    # materialize_custom_layers). It writes nothing when no reference source
+    # is cached, so what it reports is what actually reached the cache.
+    return materialize_custom_layers(guild_id, map_name)
 
 
 def remove_custom_map(guild_id: int, map_name: str) -> bool:
-    """Delete a custom map and its materialized rows."""
-    db.delete_layers(db.custom_source(guild_id), map_name)
+    """Delete a custom entry and its materialized rows."""
+    _drop_cached_rows(guild_id, _stored_entry(guild_id, map_name))
     return db.delete_custom_map(guild_id, map_name)
+
+
+def claimed_layer(guild_id: int, raw_names: list[str],
+                  own_names: set) -> Optional[tuple[str, str]]:
+    """(layer, entry) for the first raw name another custom entry already lists.
+
+    layer_cache keys rows on (raw_name, source), so a raw name listed by two
+    entries would have the second save silently take over the first entry's
+    row — and deleting either entry would remove a layer the other still
+    lists. `own_names` are the entries this save replaces (the one being
+    edited, and the name it is saved under). Compared case-insensitively,
+    like split_layer_lines.
+    """
+    wanted = {name.lower(): name for name in raw_names}
+    for entry in db.get_custom_maps(guild_id):
+        if entry["map_name"] in own_names:
+            continue
+        for layer in (entry.get("payload") or {}).get("layers") or []:
+            if layer.lower() in wanted:
+                return wanted[layer.lower()], entry["map_name"]
+    return None
 
 
 def colliding_map_name(name: str) -> Optional[str]:

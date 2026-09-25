@@ -28,7 +28,7 @@ from i18n import t, phase_name
 from utils import (
     has_organizer_role, is_guild_admin,
     check_role_gate,
-    format_layer_short, format_layer_poll_option, suggestion_matches,
+    format_layer_short, format_layer_poll_option, format_mode, suggestion_matches,
     format_vehicle_list, build_ping_messages,
     build_event_embed, build_squadcalc_url, source_label, fit_lines_to_field,
     build_legend_lines,
@@ -680,16 +680,18 @@ def _units_source(source: str) -> str:
 
 
 def _custom_workshop_url(source: str, guild_id: int,
-                         map_name: str) -> Optional[str]:
-    """The Steam Workshop link of the custom map behind a layer, or None.
+                         raw_name: str) -> Optional[str]:
+    """The Steam Workshop link of the custom entry behind a layer, or None.
 
-    Only admin-defined maps can carry one, so a fetched source short-circuits
-    without touching the database. Read live wherever the layer is being
-    picked, and snapshotted onto the suggestion once it is submitted.
+    Only admin-defined layers can carry one, so a fetched source
+    short-circuits without touching the database. Keyed on the raw name: a
+    pack's layers sit on stock maps that are not the entry's name. Read live
+    wherever the layer is being picked, and snapshotted onto the suggestion
+    once it is submitted.
     """
     if not (source or "").startswith(CUSTOM_SOURCE_PREFIX):
         return None
-    return custom_layers.workshop_url_for(guild_id, map_name)
+    return custom_layers.workshop_url_for(guild_id, raw_name)
 
 
 def get_team_vehicles(layer_data: dict, faction: str, team: int,
@@ -1182,7 +1184,8 @@ class SuggestState:
     __slots__ = ("guild_id", "channel_id", "db_id", "source", "map_name",
                  "mode_raw_name", "gamemode", "layer_version",
                  "team1_faction", "team1_unit", "team2_faction", "team2_unit",
-                 "layer_data", "flow", "mirror_match", "mirror_effective")
+                 "layer_data", "flow", "mirror_match", "mirror_effective",
+                 "allowed_sources", "source_filter")
 
     def __init__(self, guild_id: int, channel_id: int, flow: str = "suggest",
                  db_id: int = 0):
@@ -1195,6 +1198,12 @@ class SuggestState:
         # Empty string acts as "no source filter" — used for legacy events that
         # predate per-source caching.
         self.source = ""
+        # Every source the event allows, and the ones the picker steps for the
+        # chosen source read from — the chosen one, plus the guild's custom
+        # source when it is folded in (see _overlay_target). An empty filter
+        # means no source filter, like an empty `source` always has.
+        self.allowed_sources: list[str] = []
+        self.source_filter: list[str] = []
         self.map_name = None
         self.mode_raw_name = None
         self.gamemode = None
@@ -1248,6 +1257,12 @@ def _state_event_settings(state: "SuggestState") -> dict:
     return _event_settings(record["event"] if record else {}, settings)
 
 
+def _state_mode_str(state: "SuggestState") -> str:
+    """Mode line of the flow's step headers, led by a mod layer's variant."""
+    return format_mode(state.gamemode, state.layer_version,
+                       (state.layer_data or {}).get("variant"))
+
+
 def _resolve_event_sources(event: dict, guild_id: int) -> list[str]:
     """Return the list of source names a user may pick from for this event.
 
@@ -1268,6 +1283,59 @@ def _resolve_event_sources(event: dict, guild_id: int) -> list[str]:
     if explicit:
         return list(explicit)
     return db.get_guild_sources(guild_id)
+
+
+def _overlay_target(sources: list[str], guild_id: int) -> Optional[str]:
+    """The source the guild's custom source is folded into, or None.
+
+    With both the reference source (main) and the custom source allowed,
+    custom is no picker entry of its own: mod layers sit under their stock
+    map, and the guild's own maps join the reference source's map picker in
+    its Custom dropdown. Without the reference source, custom stays a source
+    like any other.
+    """
+    ref = custom_layers.resolve_reference_source()
+    if ref and ref in sources and db.custom_source(guild_id) in sources:
+        return ref
+    return None
+
+
+def _picker_sources(sources: list[str], guild_id: int) -> list[str]:
+    """What the source picker offers: the allowed sources, minus a folded-in custom one."""
+    if _overlay_target(sources, guild_id):
+        custom = db.custom_source(guild_id)
+        return [s for s in sources if s != custom]
+    return list(sources)
+
+
+def _choose_source(state: "SuggestState", source: str) -> None:
+    """Record the picked source and the sources its picker steps read from."""
+    state.source = source
+    state.source_filter = [source]
+    if source == _overlay_target(state.allowed_sources, state.guild_id):
+        state.source_filter.append(db.custom_source(state.guild_id))
+
+
+def _apply_mode_pick(state: "SuggestState", raw_name: str) -> Optional[dict]:
+    """Load the picked layer into the flow state; None if it is gone.
+
+    Pinned to the picked map: with custom folded in, the same raw name can
+    exist on another map in another source. The flow then carries the row's
+    own source — custom:<guild> for a mod layer found under main — which
+    keeps SquadCalc off it and lets the Workshop link and the borrowed
+    vehicle data resolve. Nothing after this step returns to the map step,
+    so the overwritten source is never read as the picked one.
+    """
+    layer = db.get_layer_by_raw_name(raw_name, allowed_sources=state.source_filter,
+                                     map_name=state.map_name)
+    if layer is None:
+        return None
+    state.mode_raw_name = raw_name
+    state.gamemode = layer["gamemode"]
+    state.layer_version = layer["layer_version"]
+    state.layer_data = layer
+    state.source = layer["source"]
+    return layer
 
 
 async def handle_suggest_start(interaction: discord.Interaction, db_id: int):
@@ -1320,10 +1388,12 @@ async def handle_suggest_start(interaction: discord.Interaction, db_id: int):
     _suggest_sessions[interaction.user.id] = state
 
     sources = _resolve_event_sources(event, interaction.guild_id)
-    if len(sources) > 1:
+    state.allowed_sources = sources
+    offered = _picker_sources(sources, interaction.guild_id)
+    if len(offered) > 1:
         # Show source picker first; the map step runs after the user picks one.
         options = [discord.SelectOption(label=source_label(s, lang)[:100], value=s)
-                   for s in sources[:25]]
+                   for s in offered[:25]]
         view = _bind(SourceSelectView(options, lang), interaction)
         embed = discord.Embed(
             title=t("suggest.phase_title", lang),
@@ -1333,14 +1403,14 @@ async def handle_suggest_start(interaction: discord.Interaction, db_id: int):
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
         return
 
-    if not sources:
-        # Nothing this guild may draw from. Falling through would set
-        # state.source = "", which downstream means *no source filter at all*.
+    if not offered:
+        # Nothing this guild may draw from. Falling through would leave an
+        # empty source filter, which downstream means *no filter at all*.
         await interaction.response.send_message(t("cache.empty", lang), ephemeral=True)
         return
 
     # Single source: skip the picker.
-    state.source = sources[0]
+    _choose_source(state, offered[0])
     await _suggest_show_map_step(interaction, state, settings, lang, edit=False)
 
 
@@ -1422,7 +1492,7 @@ async def _suggest_show_map_step(interaction: discord.Interaction, state: Sugges
     """Render the map-select dropdown. Used after source pick or when only one source exists."""
     event_settings = _state_event_settings(state) if state.db_id else (settings or {})
     blacklisted_maps = event_settings.get("blacklisted_maps", [])
-    source_filter = [state.source] if state.source else None
+    source_filter = state.source_filter
     maps = db.get_unique_maps(excluded_maps=blacklisted_maps, allowed_sources=source_filter)
 
     if not maps:
@@ -1438,9 +1508,9 @@ async def _suggest_show_map_step(interaction: discord.Interaction, state: Sugges
 
     sizes = db.get_map_sizes(allowed_sources=source_filter)
     # Which of these are the guild's own maps, so they get their own dropdown
-    # rather than being filed under a size they do not have.
-    custom_maps = set(db.get_unique_maps(
-        allowed_sources=[db.custom_source(state.guild_id)]))
+    # rather than being filed under a size they do not have. Only its own: a
+    # stock map carrying a pack's layers keeps its size bucket.
+    custom_maps = set(db.get_own_custom_maps(state.guild_id))
     view = _bind(_build_map_picker_view(maps, lang, sizes, custom_maps), interaction)
     desc = t("suggest.select_map", lang)
     if state.source:
@@ -1475,7 +1545,7 @@ class SourceSelect(ui.Select):
             return
 
         self.view.stop()  # retire this step so its timer can't clobber later steps
-        state.source = self.values[0]
+        _choose_source(state, self.values[0])
         settings = db.get_guild_settings(state.guild_id)
         lang = settings.get("language", "en") if settings else "en"
         await _suggest_show_map_step(interaction, state, settings or {}, lang, edit=True)
@@ -1552,7 +1622,7 @@ class MapSelect(ui.Select):
         settings = db.get_guild_settings(state.guild_id)
         lang = settings.get("language", "en") if settings else "en"
         event_settings = _state_event_settings(state) if state.db_id else (settings or {})
-        source_filter = [state.source] if state.source else None
+        source_filter = state.source_filter
 
         # Get available modes for this map (within the chosen source, if any)
         modes = db.get_modes_for_map(
@@ -1605,9 +1675,7 @@ class ModeSelect(ui.Select):
             return
 
         self.view.stop()  # retire this step so its timer can't clobber later steps
-        raw_name = self.values[0]
-        source_filter = [state.source] if state.source else None
-        layer_data = db.get_layer_by_raw_name(raw_name, allowed_sources=source_filter)
+        layer_data = _apply_mode_pick(state, self.values[0])
         if not layer_data:
             await interaction.response.edit_message(
                 embed=discord.Embed(description="Layer not found.", color=discord.Color.red()),
@@ -1615,10 +1683,6 @@ class ModeSelect(ui.Select):
             )
             return
 
-        state.mode_raw_name = raw_name
-        state.gamemode = layer_data["gamemode"]
-        state.layer_version = layer_data["layer_version"]
-        state.layer_data = layer_data
         # Mirror Match only applies to symmetric layers; on asymmetric modes the
         # normal independent flow runs (with a notice at the team 1 step).
         state.mirror_effective = state.mirror_match and _is_mirror_compatible(layer_data)
@@ -1671,7 +1735,7 @@ async def _show_team1_faction_select(interaction: discord.Interaction,
     elif state.mirror_match and not state.mirror_effective:
         prefix = f"{t('suggest.mirror_mode_excluded', lang, mode=state.gamemode)}\n\n"
 
-    mode_str = f"{state.gamemode} {state.layer_version}".strip() if state.layer_version else state.gamemode
+    mode_str = _state_mode_str(state)
     view = _bind(Team1FactionSelectView(options, lang), interaction)
     embed = discord.Embed(
         title=t("suggest.phase_title", lang),
@@ -1745,7 +1809,7 @@ class Team1FactionSelect(ui.Select):
             "suggest.select_team1_unit_mirror" if state.mirror_effective
             else "suggest.select_team1_unit", lang)
         hint = f"{t('suggest.mirror_hint', lang)}\n\n" if state.mirror_effective else ""
-        mode_str = f"{state.gamemode} {state.layer_version}".strip() if state.layer_version else state.gamemode
+        mode_str = _state_mode_str(state)
         view = _bind(Team1UnitSelectView(options, lang, placeholder=unit_placeholder), interaction)
         embed = discord.Embed(
             title=t("suggest.phase_title", lang),
@@ -1814,7 +1878,7 @@ async def _show_team2_faction_select(interaction: discord.Interaction,
 
     options = _faction_select_options(factions)
 
-    mode_str = f"{state.gamemode} {state.layer_version}".strip() if state.layer_version else state.gamemode
+    mode_str = _state_mode_str(state)
     view = _bind(Team2FactionSelectView(options, lang), interaction)
     embed = discord.Embed(
         title=t("suggest.phase_title", lang),
@@ -1876,7 +1940,7 @@ class Team2FactionSelect(ui.Select):
             for u in units[:25]
         ]
 
-        mode_str = f"{state.gamemode} {state.layer_version}".strip() if state.layer_version else state.gamemode
+        mode_str = _state_mode_str(state)
         view = _bind(Team2UnitSelectView(options, lang), interaction)
         embed = discord.Embed(
             title=t("suggest.phase_title", lang),
@@ -1938,7 +2002,7 @@ def _layer_link_line(suggestion: dict, lang: str) -> str:
 async def _show_confirm(interaction: discord.Interaction, state: SuggestState, settings: dict):
     """Show the confirmation step with Submit/Cancel buttons."""
     lang = settings.get("language", "en") if settings else "en"
-    mode_str = f"{state.gamemode} {state.layer_version}".strip() if state.layer_version else state.gamemode
+    mode_str = _state_mode_str(state)
 
     # Preview-shaped suggestion for the layer link (mirrors the fields
     # build_squadcalc_url reads from a stored suggestion). The Workshop link is
@@ -1949,6 +2013,7 @@ async def _show_confirm(interaction: discord.Interaction, state: SuggestState, s
         "map_name": state.map_name,
         "gamemode": state.gamemode,
         "layer_version": state.layer_version,
+        "layer_variant": (state.layer_data or {}).get("variant"),
         "team1_faction": state.team1_faction,
         "team2_faction": state.team2_faction,
         "team1_unit": state.team1_unit,
@@ -1956,7 +2021,7 @@ async def _show_confirm(interaction: discord.Interaction, state: SuggestState, s
         "team1_unit_prefix": _resolve_unit_prefix(state.layer_data, state.team1_faction, 1),
         "team2_unit_prefix": _resolve_unit_prefix(state.layer_data, state.team2_faction, 2),
         "workshop_url": _custom_workshop_url(state.source, state.guild_id,
-                                             state.map_name),
+                                             state.mode_raw_name),
     }
 
     mirror_line = f"\n**Mirror Match:** {t('suggest.mirror_on', lang)}" if state.mirror_effective else ""
@@ -2062,6 +2127,7 @@ async def handle_suggest_submit(interaction: discord.Interaction, lang: str):
             "map_name": state.map_name,
             "gamemode": state.gamemode,
             "layer_version": state.layer_version,
+            "layer_variant": (state.layer_data or {}).get("variant"),
             "team1_faction": state.team1_faction,
             "team1_faction_name": _resolve_faction_name(state.layer_data, state.team1_faction, 1),
             "team1_unit": state.team1_unit,
@@ -2078,7 +2144,7 @@ async def handle_suggest_submit(interaction: discord.Interaction, lang: str):
         # Snapshotted like the faction names above: the 🗺️ icon then links to
         # the mod's Workshop page, which SquadCalc cannot resolve.
         suggestion["workshop_url"] = _custom_workshop_url(
-            state.source, state.guild_id, state.map_name)
+            state.source, state.guild_id, state.mode_raw_name)
 
         # Check duplicate in current event
         for existing in event.get("suggestions", []):
@@ -2509,7 +2575,8 @@ class CustomMapsView(AutoDisableView):
     misclick in a dropdown is a cheap way to lose both.
     """
 
-    def __init__(self, lang: str, db_id: int, maps: list[dict]):
+    def __init__(self, lang: str, db_id: int, maps: list[dict],
+                 counts: Optional[dict[str, str]] = None):
         super().__init__(timeout=120)
         self.lang = lang
         self.db_id = db_id
@@ -2529,10 +2596,11 @@ class CustomMapsView(AutoDisableView):
             # objects, or a default set on one would show up on the other.
             def map_options():
                 return [
-                    discord.SelectOption(label=m["map_name"][:100],
-                                         value=m["map_name"][:100],
-                                         description=t("custom_map.layer_count", lang,
-                                                       count=len(m["payload"].get("layers") or []))[:100])
+                    discord.SelectOption(
+                        label=m["map_name"][:100], value=m["map_name"][:100],
+                        description=((counts or {}).get(m["map_name"])
+                                     or t("custom_map.layer_count", lang,
+                                          count=len(m["payload"].get("layers") or [])))[:100])
                     for m in maps[:25]
                 ]
 
@@ -2612,18 +2680,41 @@ class CustomMapsView(AutoDisableView):
         await handle_admin_panel(interaction, self.db_id, edit=True)
 
 
+def _custom_entry_counts(maps: list[dict], lang: str) -> dict[str, str]:
+    """{entry name: "3 layers" | "16 layers on 12 maps"} for the panel.
+
+    A pack's map count is re-derived from its raw names; with no reference
+    source cached it honestly reads 0 — nothing is materialized either.
+    """
+    map_tokens: dict[str, str] = {}
+    if any(m["payload"].get("pack") for m in maps):
+        source = custom_layers.resolve_reference_source()
+        map_tokens = custom_layers.build_map_token_map(source) if source else {}
+    counts = {}
+    for m in maps:
+        layers = m["payload"].get("layers") or []
+        if m["payload"].get("pack"):
+            counts[m["map_name"]] = t(
+                "custom_map.layer_count_pack", lang, count=len(layers),
+                maps=custom_layers.pack_map_count(layers, map_tokens))
+        else:
+            counts[m["map_name"]] = t("custom_map.layer_count", lang,
+                                      count=len(layers))
+    return counts
+
+
 async def _render_custom_maps(interaction: discord.Interaction, db_id: int,
                               lang: str, notice: str = ""):
     """Draw (or redraw) the Custom Maps sub-panel over the current message."""
     maps = db.get_custom_maps(interaction.guild_id)
+    counts = _custom_entry_counts(maps, lang)
 
     if maps:
         lines = [
             "• **{}**{} — {}".format(
                 m["map_name"],
                 " 🔗" if m["payload"].get("workshop_url") else "",
-                t("custom_map.layer_count", lang,
-                  count=len(m["payload"].get("layers") or [])))
+                counts[m["map_name"]])
             for m in maps
         ]
         body = "\n".join(lines)
@@ -2640,7 +2731,7 @@ async def _render_custom_maps(interaction: discord.Interaction, db_id: int,
         description=f"{notice}\n\n{body}" if notice else body,
         color=discord.Color.dark_red(),
     )
-    view = CustomMapsView(lang, db_id, maps)
+    view = CustomMapsView(lang, db_id, maps, counts)
     await interaction.response.edit_message(embed=embed, view=_bind(view, interaction))
 
 
@@ -2677,6 +2768,8 @@ class CustomMapModal(ui.Modal):
         payload = (entry or {}).get("payload") or {}
         self.preselected_factions = list(payload.get("factions") or [])
         self.preselected_units = list(payload.get("units") or [])
+        # A pack stays a pack: see the refusal in on_submit.
+        self.original_pack = bool(payload.get("pack"))
 
         self.layers_input = ui.TextInput(
             label=t("custom_map.field_layers", lang)[:45],
@@ -2706,9 +2799,14 @@ class CustomMapModal(ui.Modal):
         self.add_item(self.workshop_input)
 
     async def on_submit(self, interaction: discord.Interaction):
+        # Mod layers find their stock map through the reference source's raw
+        # names, so it is resolved before parsing. Without one every line
+        # reads as a classic map, and the refusal below still fires.
+        source = custom_layers.resolve_reference_source()
+        map_tokens = custom_layers.build_map_token_map(source) if source else {}
         try:
             map_token, layers = custom_layers.parse_custom_layers(
-                str(self.layers_input.value))
+                str(self.layers_input.value), map_tokens)
             workshop_url = custom_layers.normalize_workshop_url(
                 str(self.workshop_input.value))
         except custom_layers.CustomLayerError as e:
@@ -2720,7 +2818,6 @@ class CustomMapModal(ui.Modal):
 
         # A select with zero options is rejected by Discord, so an unusable
         # reference source is refused here rather than at render time.
-        source = custom_layers.resolve_reference_source()
         faction_ids = sorted(db.get_faction_reference([source])) if source else []
         unit_types = db.get_unique_unit_types([source]) if source else []
         if not faction_ids or not unit_types:
@@ -2731,15 +2828,31 @@ class CustomMapModal(ui.Modal):
                 ephemeral=True)
             return
 
+        pack = custom_layers.is_pack(layers)
+        if self.original_pack and not pack:
+            # The stored pack's lines no longer place on a stock map — the
+            # reference source lacks those maps, typically because main failed
+            # to fetch and another source stands in. Saving now would turn the
+            # pack into one classic map named after it, and that would not heal
+            # once main is back.
+            await interaction.response.send_message(
+                embed=discord.Embed(
+                    description=t("custom_map.err_pack_unplaceable", self.lang),
+                    color=discord.Color.red()),
+                ephemeral=True)
+            return
+
         map_name = custom_layers.normalize_map_name(
             str(self.name_input.value), map_token)
 
         # Only when the name is actually changing. A fetched map that appears
         # after this custom map was created would otherwise make every edit of
         # it impossible, including edits that never touch the name, leaving the
-        # admin no way out but delete-and-re-add.
+        # admin no way out but delete-and-re-add. A pack's name only labels it
+        # in this panel — its layers sit on stock maps — so there is no map
+        # name for the blacklist to confuse.
         clash = (custom_layers.colliding_map_name(map_name)
-                 if map_name != self.original_name else None)
+                 if not pack and map_name != self.original_name else None)
         if clash:
             await interaction.response.send_message(
                 embed=discord.Embed(
@@ -2768,11 +2881,24 @@ class CustomMapModal(ui.Modal):
                 ephemeral=True)
             return
 
+        claimed = custom_layers.claimed_layer(
+            interaction.guild_id, [layer["raw_name"] for layer in layers],
+            {self.original_name, map_name})
+        if claimed:
+            await interaction.response.send_message(
+                embed=discord.Embed(
+                    description=t("custom_map.err_layer_taken", self.lang,
+                                  layer=claimed[0], entry=claimed[1]),
+                    color=discord.Color.red()),
+                ephemeral=True)
+            return
+
         view = CustomMapDetailsView(self.lang, self.db_id, map_name, layers,
                                     faction_ids, unit_types, workshop_url,
                                     original_name=self.original_name,
                                     preselected_factions=self.preselected_factions,
-                                    preselected_units=self.preselected_units)
+                                    preselected_units=self.preselected_units,
+                                    pack=pack)
         embed = discord.Embed(
             title=t("custom_map.details_title", self.lang),
             description=t("custom_map.details_desc", self.lang,
@@ -2809,7 +2935,8 @@ class CustomMapDetailsView(AutoDisableView):
                  workshop_url: Optional[str] = None,
                  original_name: Optional[str] = None,
                  preselected_factions: Optional[list[str]] = None,
-                 preselected_units: Optional[list[str]] = None):
+                 preselected_units: Optional[list[str]] = None,
+                 pack: bool = False):
         super().__init__(timeout=300)
         self.lang = lang
         self.db_id = db_id
@@ -2817,6 +2944,7 @@ class CustomMapDetailsView(AutoDisableView):
         self.layers = layers
         self.workshop_url = workshop_url
         self.original_name = original_name
+        self.pack = pack
         self.selected_factions: list[str] = list(preselected_factions or [])
         self.selected_units: list[str] = list(preselected_units or [])
         self.truncated = len(faction_ids) > 25 or len(unit_types) > 25
@@ -2869,7 +2997,8 @@ class CustomMapDetailsView(AutoDisableView):
         written = custom_layers.save_custom_map(
             interaction.guild_id, self.map_name,
             [layer["raw_name"] for layer in self.layers],
-            self.selected_factions, self.selected_units, self.workshop_url)
+            self.selected_factions, self.selected_units, self.workshop_url,
+            pack=self.pack)
 
         if written == 0:
             # Nothing reached the cache — materialization needs a fetched source
@@ -6856,6 +6985,7 @@ async def _handle_history_add_submit(interaction: discord.Interaction,
         "map_name": state.map_name,
         "gamemode": state.gamemode,
         "layer_version": state.layer_version,
+        "layer_variant": (state.layer_data or {}).get("variant"),
         "team1_faction": state.team1_faction,
         "team1_faction_name": _resolve_faction_name(state.layer_data, state.team1_faction, 1),
         "team1_unit": state.team1_unit,
@@ -6871,7 +7001,7 @@ async def _handle_history_add_submit(interaction: discord.Interaction,
 
     # Kept in sync with the suggest flow; history embeds render no icon today.
     layer["workshop_url"] = _custom_workshop_url(
-        state.source, state.guild_id, state.map_name)
+        state.source, state.guild_id, state.mode_raw_name)
 
     db.save_voting_history(state.guild_id, state.channel_id, [layer], layer)
 
@@ -6909,9 +7039,11 @@ async def cmd_history_add(interaction: discord.Interaction):
     # Source picker first, mirroring the suggest flow. There's no event to
     # resolve sources from, so the candidates are everything this guild has.
     sources = _resolve_event_sources({}, interaction.guild_id)
-    if len(sources) > 1:
+    state.allowed_sources = sources
+    offered = _picker_sources(sources, interaction.guild_id)
+    if len(offered) > 1:
         options = [discord.SelectOption(label=source_label(s, lang)[:100], value=s)
-                   for s in sources[:25]]
+                   for s in offered[:25]]
         view = _bind(SourceSelectView(options, lang), interaction)
         embed = discord.Embed(
             title=t("history.add_title", lang),
@@ -6921,7 +7053,7 @@ async def cmd_history_add(interaction: discord.Interaction):
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
         return
 
-    if not sources:
+    if not offered:
         # Same guard as the suggest flow: an empty list downstream would mean
         # no source filter, exposing every guild's custom rows.
         await interaction.response.send_message(t("cache.empty", lang), ephemeral=True)
@@ -6929,7 +7061,7 @@ async def cmd_history_add(interaction: discord.Interaction):
 
     # Single source: skip the picker. The map step renders the size-bucketed
     # picker via _build_map_picker_view and surfaces its own "no maps" error.
-    state.source = sources[0]
+    _choose_source(state, offered[0])
     await _suggest_show_map_step(interaction, state, settings, lang, edit=False)
 
 

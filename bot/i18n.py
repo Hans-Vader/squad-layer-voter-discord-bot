@@ -946,6 +946,10 @@ _STRINGS: dict[str, dict[str, str]] = {
         "de": "{count} Layer",
         "en": "{count} layers",
     },
+    "custom_map.layer_count_pack": {
+        "de": "{count} Layer auf {maps} Karten",
+        "en": "{count} layers on {maps} maps",
+    },
     "custom_map.none": {
         "de": "Noch keine eigenen Maps angelegt.",
         "en": "No custom maps yet.",
@@ -1060,6 +1064,27 @@ _STRINGS: dict[str, dict[str, str]] = {
         "de": "Alle Layer müssen zur selben Karte gehören. Gefunden: {maps}",
         "en": "All layers must belong to the same map. Found: {maps}",
     },
+    "custom_map.err_pack_no_mode": {
+        "de": "Diesen Layern auf bestehenden Karten fehlt der Spielmodus im "
+              "Namen: {lines}",
+        "en": "These layers on stock maps have no game mode in their name: "
+              "{lines}",
+    },
+    "custom_map.err_pack_unplaceable": {
+        "de": "Die bestehenden Karten dieses Packs fehlen gerade in den "
+              "Layer-Daten, deshalb kann er nicht gespeichert werden. Führe "
+              "`/refresh_layers` aus und versuche es dann erneut.",
+        "en": "This pack's stock maps are missing from the layer data right "
+              "now, so it can't be saved. Run `/refresh_layers`, then try "
+              "again.",
+    },
+    "custom_map.err_mixed_kinds": {
+        "de": "Diese Zeilen gehören zu keiner bestehenden Karte: {lines}. "
+              "Layer für bestehende Karten und eine eigene Map bitte getrennt "
+              "speichern.",
+        "en": "These lines don't belong to a stock map: {lines}. Save layers "
+              "for stock maps and a map of your own separately.",
+    },
     "custom_map.err_too_many": {
         "de": "Maximal {max} Layer pro Map ({count} eingegeben).",
         "en": "At most {max} layers per map ({count} given).",
@@ -1073,6 +1098,12 @@ _STRINGS: dict[str, dict[str, str]] = {
               "Namen, oder lösche die andere Map zuerst.",
         "en": "**{map}** is already a custom map. Pick another name, or "
               "delete that map first.",
+    },
+    "custom_map.err_layer_taken": {
+        "de": "**{layer}** gehört schon zu **{entry}**. Entferne den Layer "
+              "dort zuerst, oder bearbeite **{entry}**.",
+        "en": "**{layer}** already belongs to **{entry}**. Remove it there "
+              "first, or edit **{entry}** instead.",
     },
     "custom_map.err_not_found": {
         "de": "**{map}** gibt es nicht mehr — die Liste war veraltet.",

@@ -8,13 +8,14 @@ import utils
 
 
 def _seed_layer(db, raw_name, source, map_name, gamemode, factions=None,
-                layer_version="v1"):
+                layer_version="v1", variant=None):
     """Put one layer row in the cache with the shape fetch_and_cache_layers writes."""
     db.upsert_layer(
         raw_name=raw_name, source=source, map_name=map_name, map_id=map_name.lower(),
         gamemode=gamemode, layer_version=layer_version,
         factions=factions if factions is not None else [],
         team1_alliances=[], team2_alliances=[], map_size_km=None,
+        variant=variant,
     )
 
 
@@ -56,16 +57,6 @@ def test_has_layers_for_source(temp_db):
     _seed_layer(temp_db, "Belaya_TC_v1", "custom:1", "Belaya", "TerritoryControl")
     assert temp_db.has_layers_for_source("custom:1") is True
     assert temp_db.has_layers_for_source("custom:2") is False
-
-
-def test_delete_layers_is_scoped_to_source_and_map(temp_db):
-    _seed_layer(temp_db, "Belaya_TC_v1", "custom:1", "Belaya", "TerritoryControl")
-    _seed_layer(temp_db, "Kokan_TC_v1", "custom:1", "Kokan", "TerritoryControl")
-    _seed_layer(temp_db, "Belaya_TC_v1", "custom:2", "Belaya", "TerritoryControl")
-
-    assert temp_db.delete_layers("custom:1", "Belaya") == 1
-    assert temp_db.get_unique_maps(allowed_sources=["custom:1"]) == ["Kokan"]
-    assert temp_db.get_unique_maps(allowed_sources=["custom:2"]) == ["Belaya"]
 
 
 def test_get_faction_reference_prefers_entry_with_default_unit(temp_db):
@@ -246,23 +237,34 @@ REFERENCE = {
 ALL_UNITS = ["CombinedArms", "Mechanized", "Motorized"]
 
 
+REFERENCE_FACTIONS = [
+    {"factionId": "USA", "factionName": "United States Army",
+     "defaultUnit": "USA_LO_CombinedArms", "alliance": "BLUFOR",
+     "availableOnTeams": [1, 2],
+     "unitTypes": [{"type": "CombinedArms", "name": "CombinedArms"},
+                   {"type": "Mechanized", "name": "Mechanized"}]},
+    {"factionId": "RGF", "factionName": "Russian Ground Forces",
+     "defaultUnit": "RGF_LO_CombinedArms", "alliance": "REDFOR",
+     "availableOnTeams": [1, 2],
+     "unitTypes": [{"type": "CombinedArms", "name": "CombinedArms"},
+                   {"type": "Motorized", "name": "Motorized"}]},
+]
+
+
 def _seed_reference_cache(db):
     """Two main-source layers carrying the faction metadata custom maps borrow."""
-    factions = [
-        {"factionId": "USA", "factionName": "United States Army",
-         "defaultUnit": "USA_LO_CombinedArms", "alliance": "BLUFOR",
-         "availableOnTeams": [1, 2],
-         "unitTypes": [{"type": "CombinedArms", "name": "CombinedArms"},
-                       {"type": "Mechanized", "name": "Mechanized"}]},
-        {"factionId": "RGF", "factionName": "Russian Ground Forces",
-         "defaultUnit": "RGF_LO_CombinedArms", "alliance": "REDFOR",
-         "availableOnTeams": [1, 2],
-         "unitTypes": [{"type": "CombinedArms", "name": "CombinedArms"},
-                       {"type": "Motorized", "name": "Motorized"}]},
-    ]
-    _seed_layer(db, "AlBasrah_AAS_v1", "main", "Al Basrah", "AAS", factions=factions)
+    _seed_layer(db, "AlBasrah_AAS_v1", "main", "Al Basrah", "AAS",
+                factions=REFERENCE_FACTIONS)
     _seed_layer(db, "Anvil_TC_v1", "main", "Anvil", "TerritoryControl",
-                factions=factions)
+                factions=REFERENCE_FACTIONS)
+
+
+def _seed_stock_maps(db, *maps):
+    """Main-source AAS layers for these (token, map name) pairs — Chora and
+    Narva by default — carrying the faction data packs borrow."""
+    for token, map_name in maps or (("Chora", "Chora"), ("Narva", "Narva")):
+        _seed_layer(db, f"{token}_AAS_v1", "main", map_name, "AAS",
+                    factions=REFERENCE_FACTIONS)
 
 
 def test_build_custom_factions_empty_selection_means_everything():
@@ -358,13 +360,6 @@ def test_materialization_is_scoped_when_a_guild_is_given(temp_db):
     assert temp_db.has_layers_for_source(temp_db.custom_source(2)) is False
 
 
-def test_count_layers_is_scoped_to_source_and_map(temp_db):
-    _seed_layer(temp_db, "Belaya_TC_v1", "custom:1", "Belaya", "TerritoryControl")
-    _seed_layer(temp_db, "Kokan_TC_v1", "custom:1", "Kokan", "TerritoryControl")
-    assert temp_db.count_layers("custom:1", "Belaya") == 1
-    assert temp_db.count_layers("custom:1", "Nope") == 0
-
-
 def test_save_reports_zero_when_nothing_could_be_materialized(temp_db):
     # No fetched source cached, so there is no faction metadata to borrow and
     # materialization writes nothing — the save must not claim success.
@@ -441,10 +436,11 @@ def test_save_only_materializes_the_map_being_saved(temp_db):
     cl.save_custom_map(1, "Kokan", ["Kokan_AAS_v1"], [], [])
 
     source = temp_db.custom_source(1)
-    temp_db.delete_layers(source, "Belaya")          # stale cache for the other map
+    temp_db.delete_layers_by_raw_names(source, ["Belaya_TC_v1"])  # stale cache for the other map
     assert cl.save_custom_map(1, "Kokan", ["Kokan_AAS_v1"], [], []) == 1
     # Saving Kokan must not have touched Belaya's rows either way.
-    assert temp_db.count_layers(source, "Belaya") == 0
+    assert temp_db.get_layer_by_raw_name("Belaya_TC_v1",
+                                         allowed_sources=[source]) is None
 
 
 def test_get_fetched_sources_excludes_custom(temp_db):
@@ -609,11 +605,401 @@ def test_save_custom_map_stores_workshop_url(temp_db):
                            "alliance": "BLUFOR"}])
     cl.save_custom_map(1, "Belaya", ["Belaya_TC_v1"], [], [], WORKSHOP)
 
-    assert cl.workshop_url_for(1, "Belaya") == WORKSHOP
-    assert cl.workshop_url_for(1, "Kokan") is None
-    assert cl.workshop_url_for(2, "Belaya") is None
+    assert cl.workshop_url_for(1, "Belaya_TC_v1") == WORKSHOP
+    assert cl.workshop_url_for(1, "Kokan_TC_v1") is None
+    assert cl.workshop_url_for(2, "Belaya_TC_v1") is None
 
 
 def test_save_custom_map_without_workshop_url(temp_db):
     cl.save_custom_map(1, "Belaya", ["Belaya_TC_v1"], [], [])
-    assert cl.workshop_url_for(1, "Belaya") is None
+    assert cl.workshop_url_for(1, "Belaya_TC_v1") is None
+
+
+# ── Mod layers on stock maps: the cache ─────────────────────────────────────
+
+def test_init_db_adds_the_variant_column_to_an_existing_cache(tmp_path, monkeypatch):
+    # A cache created before mod layers has no `variant` column; init_db adds
+    # it in place, keeping the rows.
+    import sqlite3
+    db_file = tmp_path / "old.db"
+    conn = sqlite3.connect(db_file)
+    conn.execute(
+        "CREATE TABLE layer_cache (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "raw_name TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'default', "
+        "map_name TEXT NOT NULL, map_id TEXT NOT NULL, gamemode TEXT NOT NULL, "
+        "layer_version TEXT, map_size_km REAL, "
+        "factions_json TEXT NOT NULL DEFAULT '[]', "
+        "team1_allowed_alliances TEXT NOT NULL DEFAULT '[]', "
+        "team2_allowed_alliances TEXT NOT NULL DEFAULT '[]', "
+        "cached_at TEXT NOT NULL DEFAULT (datetime('now')), "
+        "UNIQUE(raw_name, source))")
+    conn.execute("INSERT INTO layer_cache (raw_name, source, map_name, map_id, gamemode) "
+                 "VALUES ('Chora_AAS_v1', 'main', 'Chora', 'chora', 'AAS')")
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(database, "DB_FILE", str(db_file))
+
+    database.init_db()
+
+    layer = database.get_layer_by_raw_name("Chora_AAS_v1")
+    assert layer["map_name"] == "Chora"
+    assert layer["variant"] is None
+
+
+def test_layer_rows_carry_their_variant(temp_db):
+    _seed_layer(temp_db, "Chora_AAS_v1", "main", "Chora", "AAS")
+    _seed_layer(temp_db, "SEC_26_Chora_AAS_v2", "custom:1", "Chora", "AAS",
+                layer_version="v2", variant="SEC 26")
+    assert temp_db.get_layer_by_raw_name("Chora_AAS_v1")["variant"] is None
+    assert temp_db.get_layer_by_raw_name("SEC_26_Chora_AAS_v2")["variant"] == "SEC 26"
+
+
+def test_modes_list_vanilla_first_then_each_variant(temp_db):
+    _seed_layer(temp_db, "Chora_AAS_v2", "main", "Chora", "AAS", layer_version="v2")
+    _seed_layer(temp_db, "Chora_AAS_v1", "main", "Chora", "AAS")
+    _seed_layer(temp_db, "SEC_36_Chora_TC_v1", "custom:1", "Chora",
+                "TerritoryControl", variant="SEC 36")
+    _seed_layer(temp_db, "SEC_26_Chora_AAS_v1", "custom:1", "Chora", "AAS",
+                variant="SEC 26")
+
+    modes = temp_db.get_modes_for_map("Chora", allowed_sources=["main", "custom:1"])
+
+    assert [m["display"] for m in modes] == [
+        "AAS v1", "AAS v2", "SEC 26 · AAS v1", "SEC 36 · TerritoryControl v1"]
+    assert [m["variant"] for m in modes] == [None, None, "SEC 26", "SEC 36"]
+
+
+def test_a_layer_lookup_can_be_pinned_to_one_map(temp_db):
+    # The same raw name may sit in two sources on two different maps.
+    _seed_layer(temp_db, "Chora_AAS_v1", "main", "Chora", "AAS")
+    _seed_layer(temp_db, "Chora_AAS_v1", "custom:1", "MyChora", "AAS")
+    both = ["main", "custom:1"]
+    assert temp_db.get_layer_by_raw_name(
+        "Chora_AAS_v1", allowed_sources=both, map_name="MyChora")["source"] == "custom:1"
+    assert temp_db.get_layer_by_raw_name(
+        "Chora_AAS_v1", allowed_sources=both, map_name="Chora")["source"] == "main"
+
+
+def test_map_raw_names_pairs_every_row_of_a_source(temp_db):
+    _seed_layer(temp_db, "FoolsRoad_AAS_v1", "main", "Fool's Road", "AAS")
+    _seed_layer(temp_db, "Belaya_TC_v1", "custom:1", "Belaya", "TerritoryControl")
+    assert temp_db.get_map_raw_names(["main"]) == [("Fool's Road", "FoolsRoad_AAS_v1")]
+
+
+def test_own_custom_maps_leave_out_mod_layer_rows(temp_db):
+    _seed_layer(temp_db, "Belaya_TC_v1", "custom:1", "Belaya", "TerritoryControl")
+    _seed_layer(temp_db, "SEC_26_Chora_AAS_v2", "custom:1", "Chora", "AAS",
+                variant="SEC 26")
+    _seed_layer(temp_db, "Kokan_TC_v1", "custom:2", "Kokan", "TerritoryControl")
+    assert temp_db.get_own_custom_maps(1) == ["Belaya"]
+
+
+def test_delete_layers_by_raw_names_is_scoped_to_one_source(temp_db):
+    _seed_layer(temp_db, "SEC_26_Chora_AAS_v2", "custom:1", "Chora", "AAS",
+                variant="SEC 26")
+    _seed_layer(temp_db, "SEC_36_Chora_AAS_v1", "custom:1", "Chora", "AAS",
+                variant="SEC 36")
+    _seed_layer(temp_db, "SEC_26_Chora_AAS_v2", "custom:2", "Chora", "AAS",
+                variant="SEC 26")
+
+    assert temp_db.delete_layers_by_raw_names("custom:1", ["SEC_26_Chora_AAS_v2"]) == 1
+    assert temp_db.delete_layers_by_raw_names("custom:1", []) == 0
+
+    assert [m["raw_name"] for m in temp_db.get_modes_for_map(
+        "Chora", allowed_sources=["custom:1"])] == ["SEC_36_Chora_AAS_v1"]
+    assert temp_db.has_layers_for_source("custom:2") is True
+
+
+# ── Mod layers on stock maps: parsing ───────────────────────────────────────
+
+MAP_TOKENS = {
+    "chora": "Chora", "mutaha": "Mutaha", "gorodok": "Gorodok",
+    "goosebay": "Goose Bay", "narva": "Narva", "albasrah": "Al Basrah",
+    "sumari": "Sumari Bala", "logar": "Logar Valley", "harju": "Harju",
+    "yehorivka": "Yehorivka", "fallujah": "Fallujah",
+    "blackcoast": "Black Coast", "foolsroad": "Fool's Road",
+}
+
+SEC_26 = """SEC_26_Chora_AAS_v2
+SEC_26_Mutaha_PAAS_v1
+SEC_26_Gorodok_TC_v1
+SEC_26_GooseBay_AAS_v1
+SEC_26_Narva_AAS_v3
+SEC_26_Mutaha_TC_v1
+SEC_26_AlBasrah_AAS_v1
+SEC_26_Narva_AAS_v1
+SEC_26_Sumari_AAS_v1
+SEC_26_Logar_AAS_v1
+SEC_26_Harju_AAS_v1
+SEC_26_Yehorivka_AAS_v1
+SEC_26_Chora_AAS_v1
+SEC_26_Fallujah_AAS_v1
+SEC_26_BlackCoast_RAAS_V1
+SEC_26_Gorodok_RAAS_V1
+"""
+
+
+def test_version_token_ignores_case():
+    assert cl.split_raw_name("Belaya_TC_V1") == ("Belaya", "TC", "v1")
+
+
+def test_map_token_map_is_derived_from_the_cache(temp_db):
+    _seed_layer(temp_db, "FoolsRoad_AAS_v1", "main", "Fool's Road", "AAS")
+    _seed_layer(temp_db, "FoolsRoad_RAAS_v1", "main", "Fool's Road", "RAAS")
+    _seed_layer(temp_db, "Sumari_AAS_v1", "main", "Sumari Bala", "AAS")
+    _seed_layer(temp_db, "Chora_AAS_v1", "supermod", "SPM | Chora", "AAS")
+    assert cl.build_map_token_map("main") == {
+        "foolsroad": "Fool's Road", "sumari": "Sumari Bala"}
+
+
+def test_map_token_map_drops_a_token_that_names_two_maps(temp_db):
+    _seed_layer(temp_db, "SPM_Chora_AAS_v1", "supermod", "SPM | Chora", "AAS")
+    _seed_layer(temp_db, "SPM_Narva_AAS_v1", "supermod", "SPM | Narva", "AAS")
+    assert cl.build_map_token_map("supermod") == {}
+
+
+def test_a_mod_layer_is_placed_on_its_stock_map():
+    assert cl.split_pack_name("SEC_26_Chora_AAS_v2", MAP_TOKENS) == {
+        "raw_name": "SEC_26_Chora_AAS_v2", "map_name": "Chora",
+        "gamemode_token": "AAS", "layer_version": "v2", "variant": "SEC 26"}
+
+
+def test_a_mod_layer_reads_an_uppercase_version():
+    layer = cl.split_pack_name("SEC_26_BlackCoast_RAAS_V1", MAP_TOKENS)
+    assert (layer["map_name"], layer["gamemode_token"], layer["layer_version"]) == (
+        "Black Coast", "RAAS", "v1")
+
+
+def test_every_leftover_token_joins_the_variant():
+    # Two layers differing only in "Winter"/"Summer" must never render alike.
+    layer = cl.split_pack_name("Mod_Narva_Winter_AAS_v1", MAP_TOKENS)
+    assert layer["variant"] == "Mod Winter"
+    assert layer["gamemode_token"] == "AAS"
+
+
+def test_a_name_without_a_mode_has_an_empty_gamemode_token():
+    assert cl.split_pack_name("Rivals_W1_FoolsRoad", MAP_TOKENS)["gamemode_token"] == ""
+    assert cl.split_pack_name("SEC_26_Chora_v1", MAP_TOKENS)["gamemode_token"] == ""
+
+
+def test_a_leading_stock_map_token_is_not_a_mod_layer():
+    # Shaped like a main-game layer: stays a classic custom map, where the
+    # name-collision guard deals with it.
+    assert cl.split_pack_name("Chora_AAS_v1", MAP_TOKENS) is None
+    assert cl.split_pack_name("Belaya_TC_v1", MAP_TOKENS) is None
+
+
+def test_a_whole_sec_pack_parses_onto_twelve_maps():
+    name, layers = cl.parse_custom_layers(SEC_26, MAP_TOKENS)
+    assert name == "SEC 26"
+    assert cl.is_pack(layers)
+    assert len(layers) == 16
+    assert len({layer["map_name"] for layer in layers}) == 12
+    assert {layer["variant"] for layer in layers} == {"SEC 26"}
+
+
+def test_a_pack_may_mix_variants():
+    name, layers = cl.parse_custom_layers(
+        "SEC_26_Chora_AAS_v2\nSEC_36_Chora_AAS_v1", MAP_TOKENS)
+    assert name == "SEC 26"
+    assert [layer["variant"] for layer in layers] == ["SEC 26", "SEC 36"]
+
+
+def test_a_pack_layer_without_a_mode_is_refused():
+    with pytest.raises(cl.CustomLayerError) as exc:
+        cl.parse_custom_layers("Rivals_W1_FoolsRoad\nOSI_W1_Chora", MAP_TOKENS)
+    assert exc.value.key == "custom_map.err_pack_no_mode"
+    assert "Rivals_W1_FoolsRoad" in exc.value.params["lines"]
+    assert "OSI_W1_Chora" in exc.value.params["lines"]
+
+
+def test_pack_and_classic_lines_are_not_mixed():
+    with pytest.raises(cl.CustomLayerError) as exc:
+        cl.parse_custom_layers("SEC_26_Chora_AAS_v2\nBelaya_TC_v1", MAP_TOKENS)
+    assert exc.value.key == "custom_map.err_mixed_kinds"
+    assert exc.value.params["lines"] == "Belaya_TC_v1"
+
+
+def test_a_vanilla_name_inside_a_pack_is_named_in_the_refusal():
+    with pytest.raises(cl.CustomLayerError) as exc:
+        cl.parse_custom_layers("SEC_26_Chora_AAS_v2\nChora_AAS_v1", MAP_TOKENS)
+    assert exc.value.key == "custom_map.err_mixed_kinds"
+    assert exc.value.params["lines"] == "Chora_AAS_v1"
+
+
+def test_a_classic_map_parses_the_same_with_map_tokens():
+    text = "Belaya_TC_v1\nBelaya_RAAS_v1"
+    assert cl.parse_custom_layers(text, MAP_TOKENS) == cl.parse_custom_layers(text)
+    assert not cl.is_pack(cl.parse_custom_layers(text, MAP_TOKENS)[1])
+
+
+# ── Mod layers on stock maps: storage ───────────────────────────────────────
+
+def test_a_pack_materializes_onto_its_stock_maps(temp_db):
+    _seed_stock_maps(temp_db)
+    _seed_layer(temp_db, "Chora_TC_v1", "main", "Chora", "TerritoryControl",
+                factions=REFERENCE_FACTIONS)
+
+    written = cl.save_custom_map(
+        1, "SEC 26", ["SEC_26_Chora_AAS_v2", "SEC_26_Chora_TC_v1", "SEC_26_Narva_AAS_v1"],
+        ["USA"], [], pack=True)
+
+    assert written == 3
+    layer = temp_db.get_layer_by_raw_name("SEC_26_Chora_TC_v1",
+                                          allowed_sources=["custom:1"])
+    assert layer["map_name"] == "Chora"
+    assert layer["variant"] == "SEC 26"
+    assert layer["gamemode"] == "TerritoryControl"      # token translated
+    assert layer["layer_version"] == "v1"
+    assert [f["factionId"] for f in layer["factions"]] == ["USA"]
+    assert temp_db.get_unique_maps(allowed_sources=["custom:1"]) == ["Chora", "Narva"]
+    assert temp_db.get_own_custom_maps(1) == []
+    assert temp_db.get_custom_maps(1)[0]["payload"]["pack"] is True
+
+
+def test_resaving_a_pack_drops_only_its_own_rows(temp_db):
+    _seed_stock_maps(temp_db)
+    cl.save_custom_map(1, "SEC 26", ["SEC_26_Chora_AAS_v2", "SEC_26_Narva_AAS_v1"],
+                       [], [], pack=True)
+    cl.save_custom_map(1, "SEC 36", ["SEC_36_Chora_AAS_v1"], [], [], pack=True)
+
+    cl.save_custom_map(1, "SEC 26", ["SEC_26_Narva_AAS_v1"], [], [], pack=True)
+
+    src = temp_db.custom_source(1)
+    assert temp_db.get_layer_by_raw_name("SEC_26_Chora_AAS_v2", allowed_sources=[src]) is None
+    assert temp_db.get_layer_by_raw_name("SEC_36_Chora_AAS_v1", allowed_sources=[src]) is not None
+    assert temp_db.get_layer_by_raw_name("SEC_26_Narva_AAS_v1", allowed_sources=[src]) is not None
+
+
+def test_removing_a_pack_leaves_another_pack_on_the_same_map(temp_db):
+    _seed_stock_maps(temp_db)
+    cl.save_custom_map(1, "SEC 26", ["SEC_26_Chora_AAS_v2"], [], [], pack=True)
+    cl.save_custom_map(1, "SEC 36", ["SEC_36_Chora_AAS_v1"], [], [], pack=True)
+
+    assert cl.remove_custom_map(1, "SEC 26") is True
+
+    modes = temp_db.get_modes_for_map("Chora", allowed_sources=[temp_db.custom_source(1)])
+    assert [m["raw_name"] for m in modes] == ["SEC_36_Chora_AAS_v1"]
+
+
+def test_pack_layers_whose_stock_map_is_unknown_are_skipped(temp_db):
+    # main failed to fetch and another source stands in as the reference, or
+    # upstream renamed a map: the layer is skipped, never filed under a
+    # guessed name like the pack's own.
+    _seed_stock_maps(temp_db)
+    cl.save_custom_map(1, "SEC 26", ["SEC_26_Chora_AAS_v2", "SEC_26_Narva_AAS_v1"],
+                       [], [], pack=True)
+
+    temp_db.clear_layer_cache()
+    _seed_stock_maps(temp_db, ("Narva", "Narva"))
+    assert cl.materialize_custom_layers() == 1
+    assert temp_db.get_unique_maps(allowed_sources=["custom:1"]) == ["Narva"]
+
+    temp_db.clear_layer_cache()
+    _seed_layer(temp_db, "SPM_Narva_AAS_v1", "supermod", "SPM | Narva", "AAS",
+                factions=REFERENCE_FACTIONS)
+    assert cl.materialize_custom_layers() == 0
+    assert temp_db.get_unique_maps(allowed_sources=["custom:1"]) == []
+
+
+def test_claimed_layer_names_the_entry_that_lists_it(temp_db):
+    temp_db.upsert_custom_map(1, "SEC 26", {"layers": ["SEC_26_Chora_AAS_v2"],
+                                            "pack": True})
+    assert cl.claimed_layer(1, ["sec_26_chora_aas_v2"], {"SEC Copy"}) == (
+        "sec_26_chora_aas_v2", "SEC 26")
+    assert cl.claimed_layer(1, ["SEC_26_Chora_AAS_v2"], {"SEC 26"}) is None  # its own entry
+    assert cl.claimed_layer(2, ["SEC_26_Chora_AAS_v2"], set()) is None       # another guild
+
+
+def test_a_packs_workshop_link_is_found_by_raw_name(temp_db):
+    _seed_stock_maps(temp_db)
+    cl.save_custom_map(1, "SEC 26", ["SEC_26_Chora_AAS_v2"], [], [], WORKSHOP, pack=True)
+    assert cl.workshop_url_for(1, "SEC_26_Chora_AAS_v2") == WORKSHOP
+    assert cl.workshop_url_for(1, "Chora") is None
+
+
+# ── Mod layers on stock maps: the custom source folds into main ─────────────
+
+def _overlay_guild(db):
+    """main with Chora and Narva, a SEC 26 pack on Chora, and an own map Belaya."""
+    _seed_stock_maps(db)
+    cl.save_custom_map(1, "SEC 26", ["SEC_26_Chora_AAS_v2"], [], [], pack=True)
+    cl.save_custom_map(1, "Belaya", ["Belaya_TC_v1"], [], [])
+
+
+def _state(allowed, source):
+    import bot as botmod
+    state = botmod.SuggestState(1, 10)
+    state.allowed_sources = allowed
+    botmod._choose_source(state, source)
+    return state
+
+
+def test_custom_is_folded_into_the_reference_source(temp_db):
+    import bot as botmod
+    _overlay_guild(temp_db)
+    assert botmod._picker_sources(["main", "custom:1"], 1) == ["main"]
+    assert _state(["main", "custom:1"], "main").source_filter == ["main", "custom:1"]
+
+
+def test_folding_needs_both_sources(temp_db):
+    import bot as botmod
+    _overlay_guild(temp_db)
+    _seed_layer(temp_db, "SPM_Chora_AAS_v1", "supermod", "SPM | Chora", "AAS")
+    assert botmod._picker_sources(["main"], 1) == ["main"]
+    assert botmod._picker_sources(["custom:1"], 1) == ["custom:1"]
+    assert botmod._picker_sources(["main", "supermod", "custom:1"], 1) == ["main", "supermod"]
+    assert _state(["main"], "main").source_filter == ["main"]
+    assert _state(["custom:1"], "custom:1").source_filter == ["custom:1"]
+    assert _state(["main", "supermod", "custom:1"], "supermod").source_filter == ["supermod"]
+
+
+def test_a_stock_map_lists_vanilla_then_its_mod_layers(temp_db):
+    _overlay_guild(temp_db)
+    state = _state(["main", "custom:1"], "main")
+    modes = temp_db.get_modes_for_map("Chora", allowed_sources=state.source_filter)
+    assert [m["display"] for m in modes] == ["AAS v1", "SEC 26 · AAS v2"]
+    assert "Belaya" in temp_db.get_unique_maps(allowed_sources=state.source_filter)
+
+
+def test_a_mod_layer_pick_carries_its_own_source(temp_db):
+    import bot as botmod
+    _overlay_guild(temp_db)
+    state = _state(["main", "custom:1"], "main")
+    state.map_name = "Chora"
+
+    layer = botmod._apply_mode_pick(state, "SEC_26_Chora_AAS_v2")
+
+    assert layer["variant"] == "SEC 26"
+    assert state.source == "custom:1"
+    assert (state.mode_raw_name, state.gamemode, state.layer_version) == (
+        "SEC_26_Chora_AAS_v2", "AAS", "v2")
+
+
+def test_a_mode_pick_is_pinned_to_the_picked_map(temp_db):
+    # A vanilla raw name registered under a map of its own exists twice once
+    # custom is folded into main; the pick must resolve on the picked map.
+    import bot as botmod
+    _seed_stock_maps(temp_db)
+    cl.save_custom_map(1, "MyChora", ["Chora_AAS_v1"], [], [])
+    state = _state(["main", "custom:1"], "main")
+
+    state.map_name = "MyChora"
+    assert botmod._apply_mode_pick(state, "Chora_AAS_v1")["source"] == "custom:1"
+    state.map_name = "Chora"
+    assert botmod._apply_mode_pick(state, "Chora_AAS_v1")["source"] == "main"
+
+
+def test_an_event_without_main_still_reaches_the_mod_layers(temp_db):
+    _overlay_guild(temp_db)
+    state = _state(["custom:1"], "custom:1")
+    assert temp_db.get_unique_maps(allowed_sources=state.source_filter) == ["Belaya", "Chora"]
+    modes = temp_db.get_modes_for_map("Chora", allowed_sources=state.source_filter)
+    assert [m["raw_name"] for m in modes] == ["SEC_26_Chora_AAS_v2"]
+    assert temp_db.get_own_custom_maps(1) == ["Belaya"]
+
+
+def test_blacklisting_a_stock_map_hides_its_mod_layers(temp_db):
+    _overlay_guild(temp_db)
+    assert "Chora" not in temp_db.get_unique_maps(
+        excluded_maps=["Chora"], allowed_sources=["main", "custom:1"])

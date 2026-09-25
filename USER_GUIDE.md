@@ -187,10 +187,15 @@ loadouts from. If the cache empties again between opening the dialog and
 clicking **Save**, your definition is still stored, but no layers reach
 suggestions until `/refresh_layers` runs and picks it back up.
 
-Custom maps belong to your server, survive `/refresh_layers`, and appear as
-their own **Custom Maps** entry in the suggestion flow's source picker.
-Vehicle layouts are borrowed from the matching main-game factions. A 🔗 next
-to a map in the list means it has a Steam Workshop link.
+Custom maps belong to your server and survive `/refresh_layers`. When an
+event allows both the main game and **Custom Maps**, the source picker shows
+no separate **Custom Maps** entry: your own maps appear in the map picker's
+**Custom Maps** dropdown next to Small/Medium/Large, and mod layers (see
+*Mod layers for stock maps* below) sit under their stock map — picking
+**Chora** lists the vanilla layers first, then each pack's. An event that allows **Custom Maps** without the main game keeps it as
+its own source, showing only your custom layers. Vehicle layouts are borrowed
+from the matching main-game factions. A 🔗 next to an entry in the list means
+it has a Steam Workshop link; a pack's entry also says how many maps it spans.
 
 To change an existing map, use the **"Edit a map…"** dropdown on the panel.
 It reopens the same dialog with everything filled in — layers, display name,
@@ -226,7 +231,33 @@ To remove a single map, delete it in **Admin → Custom Maps**. **Edit Event →
 Blacklisted Maps** also hides one, but blacklisting matches a map *name*
 across every source and by prefix, so a name shared with a stock map would
 hide both — the bot refuses to register a custom map with such a name in the
-first place.
+first place. Blacklisting a stock map hides the mod layers placed on it, too.
+
+#### Mod layers for stock maps
+
+A mod can also add layers to maps the game already has — SEC's player-count
+variants, for example:
+
+```
+SEC_26_Chora_AAS_v2
+SEC_26_Narva_AAS_v1
+SEC_26_BlackCoast_RAAS_V1
+```
+
+Paste them the same way. The bot finds the stock map inside each name
+(`Chora`, `Narva`, `BlackCoast` → Black Coast) and files the layer under it,
+so one entry — a *pack* — may span as many maps as it likes. Whatever in the
+name is not the map, the game mode or the version becomes the layer's label,
+`SEC 26` here, shown in front of the mode everywhere the layer appears:
+**Chora**: SEC 26 · AAS v2. The **Display name** field only names the pack in
+this panel; leave it empty to use the first label.
+
+- Every name needs a game-mode token — `Rivals_W1_FoolsRoad` is refused.
+- A pack holds mod layers only; save a map of your own as a separate entry.
+- A layer belongs to one entry only, so pasting the same pack twice under two
+  names is refused.
+- A mode your defaults switch off stays hidden — SEC's `PAAS` is not among
+  the default modes, and the save confirmation says so.
 
 ### Viewing Settings
 

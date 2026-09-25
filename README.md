@@ -6,7 +6,7 @@ A Discord bot for collecting Squad layer suggestions from users and running vote
 
 - **Layer Suggestions**: Users suggest layers via interactive dropdown menus (Map > Mode > Factions > Units)
 - **Layer Data**: Pulls from [SquadLayerList](https://github.com/fantinodavide/SquadLayerList) and caches locally
-- **Custom Maps**: Organizers can register a modded or unreleased map's layers by hand via **Admin → Custom Maps**; they survive `/refresh_layers` and behave like any other layer
+- **Custom Maps**: Organizers can register a modded or unreleased map's layers by hand via **Admin → Custom Maps** — or a mod's extra layers for maps the game already has (e.g. SEC's `SEC_26_Chora_AAS_v2`), which then appear under that stock map; they survive `/refresh_layers` and behave like any other layer
 - **Vehicle Info**: Shows each team's vehicle layout (named vehicles + counts) on the suggestion confirm screen, via the **Info** button (pick any suggested layer), and on the winning embed
 - **Mirror Match** *(per-event)*: Optionally force both teams to use the same unit type (factions may differ); exempts asymmetric modes (Invasion, Insurgency, Destruction, Frontline)
 - **Admin Blacklists**: Block maps, factions, unit types, or gamemodes

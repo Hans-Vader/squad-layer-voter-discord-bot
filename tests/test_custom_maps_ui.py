@@ -178,7 +178,7 @@ def test_details_view_carries_the_workshop_url_to_the_save(temp_db):
                                        ["USA"], ["CombinedArms"], workshop)
     asyncio.run(view._save(_StubInteraction(1)))
 
-    assert cl.workshop_url_for(1, "Belaya") == workshop
+    assert cl.workshop_url_for(1, "Belaya_TC_v1") == workshop
 
 
 def _seed_reference_cache(db):
@@ -355,7 +355,8 @@ def test_edit_that_never_touches_the_selects_keeps_the_factions(temp_db):
 def test_rename_moves_the_map_and_drops_the_old_rows(temp_db):
     _seed_reference_cache(temp_db)
     cl.save_custom_map(1, "Belaya", ["Belaya_TC_v1"], [], [])
-    assert temp_db.count_layers(temp_db.custom_source(1), "Belaya") == 1
+    src = temp_db.custom_source(1)
+    assert len(temp_db.get_modes_for_map("Belaya", allowed_sources=[src])) == 1
 
     view = botmod.CustomMapDetailsView(
         "en", 1, "Belaya Winter", LAYERS, ["USA"], ["CombinedArms"],
@@ -364,8 +365,8 @@ def test_rename_moves_the_map_and_drops_the_old_rows(temp_db):
     asyncio.run(view._save(interaction))
 
     assert [m["map_name"] for m in temp_db.get_custom_maps(1)] == ["Belaya Winter"]
-    assert temp_db.count_layers(temp_db.custom_source(1), "Belaya") == 0
-    assert temp_db.count_layers(temp_db.custom_source(1), "Belaya Winter") > 0
+    assert temp_db.get_modes_for_map("Belaya", allowed_sources=[src]) == []
+    assert temp_db.get_modes_for_map("Belaya Winter", allowed_sources=[src]) != []
     # The notice must say renamed, not saved — and t() swallows a bad
     # placeholder, so the rendered string is what gets pinned.
     body = interaction.response.edited["embed"].description
@@ -498,3 +499,155 @@ def test_edit_picker_reports_a_map_that_is_already_gone(temp_db):
     assert interaction.response.modal is None
     assert interaction.response.sent["ephemeral"] is True
     assert "Belaya" in interaction.response.sent["embed"].description
+
+
+# ── Mod-layer packs ──────────────────────────────────────────────────────────
+
+def _seed_stock_maps(db):
+    """Chora and Narva in main, carrying the faction data a pack borrows."""
+    _seed_reference_cache(db)
+    for token in ("Chora", "Narva"):
+        db.upsert_layer(
+            raw_name=f"{token}_AAS_v1", source="main", map_name=token,
+            map_id=token.lower(), gamemode="AAS", layer_version="v1",
+            factions=[{"factionId": "USA", "factionName": "United States Army",
+                       "defaultUnit": "USA_LO_CombinedArms", "alliance": "BLUFOR",
+                       "availableOnTeams": [1, 2],
+                       "unitTypes": [{"type": "CombinedArms", "name": "CombinedArms"}]}],
+            team1_alliances=[], team2_alliances=[], map_size_km=None,
+        )
+
+
+def _submit(modal, layers, name=""):
+    modal.layers_input._value = layers
+    modal.name_input._value = name
+    modal.workshop_input._value = ""
+    interaction = _StubInteraction(1)
+    asyncio.run(modal.on_submit(interaction))
+    return interaction
+
+
+SEC_PACK = [{"raw_name": "SEC_26_Chora_AAS_v2", "map_name": "Chora",
+             "gamemode_token": "AAS", "layer_version": "v2", "variant": "SEC 26"}]
+
+
+def test_modal_turns_mod_layers_into_a_pack(temp_db):
+    # "Chora Pack" would collide with the stock map Chora as a map of its own;
+    # a pack's name never reaches a map picker, so it is not refused.
+    _seed_stock_maps(temp_db)
+    interaction = _submit(botmod.CustomMapModal("en", 1),
+                          "SEC_26_Chora_AAS_v2\nSEC_26_Narva_AAS_v1", name="Chora Pack")
+
+    assert interaction.response.sent is None
+    view = interaction.response.edited["view"]
+    assert isinstance(view, botmod.CustomMapDetailsView)
+    assert view.pack is True
+    assert view.map_name == "Chora Pack"
+
+
+def test_modal_names_a_pack_after_its_first_variant(temp_db):
+    _seed_stock_maps(temp_db)
+    interaction = _submit(botmod.CustomMapModal("en", 1), "SEC_26_Chora_AAS_v2")
+    assert interaction.response.edited["view"].map_name == "SEC 26"
+
+
+def test_modal_refuses_a_layer_another_entry_lists(temp_db):
+    _seed_stock_maps(temp_db)
+    cl.save_custom_map(1, "SEC 26", ["SEC_26_Chora_AAS_v2"], [], [], pack=True)
+
+    interaction = _submit(botmod.CustomMapModal("en", 1),
+                          "SEC_26_Chora_AAS_v2", name="SEC Copy")
+
+    assert interaction.response.edited is None
+    assert interaction.response.sent["embed"].description == t(
+        "custom_map.err_layer_taken", "en", layer="SEC_26_Chora_AAS_v2", entry="SEC 26")
+    assert [m["map_name"] for m in temp_db.get_custom_maps(1)] == ["SEC 26"]
+
+
+def test_editing_a_pack_does_not_trip_over_its_own_layers(temp_db):
+    _seed_stock_maps(temp_db)
+    cl.save_custom_map(1, "SEC 26", ["SEC_26_Chora_AAS_v2"], [], [], pack=True)
+    entry = temp_db.get_custom_maps(1)[0]
+
+    interaction = _submit(botmod.CustomMapModal("en", 1, entry=entry),
+                          "SEC_26_Chora_AAS_v2\nSEC_26_Narva_AAS_v1", name="SEC 26")
+
+    assert interaction.response.sent is None
+    assert interaction.response.edited["view"].pack is True
+
+
+def test_details_view_saves_a_pack(temp_db):
+    _seed_stock_maps(temp_db)
+    view = botmod.CustomMapDetailsView("en", 1, "SEC 26", SEC_PACK,
+                                       ["USA"], ["CombinedArms"], pack=True)
+    asyncio.run(view._save(_StubInteraction(1)))
+
+    assert temp_db.get_custom_maps(1)[0]["payload"]["pack"] is True
+    layer = temp_db.get_layer_by_raw_name("SEC_26_Chora_AAS_v2",
+                                          allowed_sources=["custom:1"])
+    assert layer["map_name"] == "Chora"
+
+
+def test_panel_counts_the_maps_a_pack_spans(temp_db):
+    _seed_stock_maps(temp_db)
+    cl.save_custom_map(1, "SEC 26", ["SEC_26_Chora_AAS_v2", "SEC_26_Chora_AAS_v1",
+                                     "SEC_26_Narva_AAS_v1"], [], [], pack=True)
+    cl.save_custom_map(1, "Belaya", ["Belaya_TC_v1"], [], [])
+    interaction = _StubInteraction(1)
+
+    asyncio.run(botmod._render_custom_maps(interaction, 1, "en"))
+
+    pack_text = t("custom_map.layer_count_pack", "en", count=3, maps=2)
+    body = interaction.response.edited["embed"].description
+    assert f"**SEC 26** — {pack_text}" in body
+    assert f"**Belaya** — {t('custom_map.layer_count', 'en', count=1)}" in body
+    view = interaction.response.edited["view"]
+    assert {o.value: o.description for o in view.edit_select.options}["SEC 26"] == pack_text
+
+
+def test_map_step_keeps_stock_maps_out_of_the_custom_dropdown(temp_db):
+    _seed_stock_maps(temp_db)
+    cl.save_custom_map(1, "SEC 26", ["SEC_26_Chora_AAS_v2"], [], [], pack=True)
+    cl.save_custom_map(1, "Belaya", ["Belaya_TC_v1"], [], [])
+    state = botmod.SuggestState(1, 10)
+    state.allowed_sources = ["main", "custom:1"]
+    botmod._choose_source(state, "main")
+    interaction = _StubInteraction(1)
+
+    asyncio.run(botmod._suggest_show_map_step(interaction, state, {}, "en", edit=False))
+
+    selects = _selects(interaction.response.sent["view"])
+    custom = next(s for s in selects if t("source.custom", "en") in s.placeholder)
+    assert [o.value for o in custom.options] == ["Belaya"]
+    offered = sorted(o.value for s in selects for o in s.options)
+    assert offered == ["Al Basrah", "Belaya", "Chora", "Narva"]
+
+
+def test_editing_a_pack_is_refused_while_its_stock_maps_are_missing(temp_db):
+    # main failed to fetch and supermod stands in as the reference: it cannot
+    # place SEC names on a stock map, so the lines parse as one classic map.
+    # Saving that would turn the pack into a map called "SEC 26" for good.
+    _seed_stock_maps(temp_db)
+    cl.save_custom_map(1, "SEC 26", ["SEC_26_Chora_AAS_v2", "SEC_26_Narva_AAS_v1"],
+                       [], [], pack=True)
+    entry = temp_db.get_custom_maps(1)[0]
+    temp_db.clear_layer_cache()
+    for token in ("Chora", "Narva"):
+        temp_db.upsert_layer(
+            raw_name=f"SPM_{token}_AAS_v1", source="supermod",
+            map_name=f"SPM | {token}", map_id=token.lower(), gamemode="AAS",
+            layer_version="v1",
+            factions=[{"factionId": "USA", "factionName": "United States Army",
+                       "defaultUnit": "USA_LO_CombinedArms", "alliance": "BLUFOR",
+                       "availableOnTeams": [1, 2],
+                       "unitTypes": [{"type": "CombinedArms", "name": "CombinedArms"}]}],
+            team1_alliances=[], team2_alliances=[], map_size_km=None,
+        )
+
+    interaction = _submit(botmod.CustomMapModal("en", 1, entry=entry),
+                          "SEC_26_Chora_AAS_v2\nSEC_26_Narva_AAS_v1", name="SEC 26")
+
+    assert interaction.response.edited is None
+    assert interaction.response.sent["embed"].description == t(
+        "custom_map.err_pack_unplaceable", "en")
+    assert temp_db.get_custom_maps(1)[0]["payload"]["pack"] is True
