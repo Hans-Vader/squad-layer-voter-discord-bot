@@ -713,3 +713,126 @@ def test_delete_layers_by_raw_names_is_scoped_to_one_source(temp_db):
     assert [m["raw_name"] for m in temp_db.get_modes_for_map(
         "Chora", allowed_sources=["custom:1"])] == ["SEC_36_Chora_AAS_v1"]
     assert temp_db.has_layers_for_source("custom:2") is True
+
+
+# ── Mod layers on stock maps: parsing ───────────────────────────────────────
+
+MAP_TOKENS = {
+    "chora": "Chora", "mutaha": "Mutaha", "gorodok": "Gorodok",
+    "goosebay": "Goose Bay", "narva": "Narva", "albasrah": "Al Basrah",
+    "sumari": "Sumari Bala", "logar": "Logar Valley", "harju": "Harju",
+    "yehorivka": "Yehorivka", "fallujah": "Fallujah",
+    "blackcoast": "Black Coast", "foolsroad": "Fool's Road",
+}
+
+SEC_26 = """SEC_26_Chora_AAS_v2
+SEC_26_Mutaha_PAAS_v1
+SEC_26_Gorodok_TC_v1
+SEC_26_GooseBay_AAS_v1
+SEC_26_Narva_AAS_v3
+SEC_26_Mutaha_TC_v1
+SEC_26_AlBasrah_AAS_v1
+SEC_26_Narva_AAS_v1
+SEC_26_Sumari_AAS_v1
+SEC_26_Logar_AAS_v1
+SEC_26_Harju_AAS_v1
+SEC_26_Yehorivka_AAS_v1
+SEC_26_Chora_AAS_v1
+SEC_26_Fallujah_AAS_v1
+SEC_26_BlackCoast_RAAS_V1
+SEC_26_Gorodok_RAAS_V1
+"""
+
+
+def test_version_token_ignores_case():
+    assert cl.split_raw_name("Belaya_TC_V1") == ("Belaya", "TC", "v1")
+
+
+def test_map_token_map_is_derived_from_the_cache(temp_db):
+    _seed_layer(temp_db, "FoolsRoad_AAS_v1", "main", "Fool's Road", "AAS")
+    _seed_layer(temp_db, "FoolsRoad_RAAS_v1", "main", "Fool's Road", "RAAS")
+    _seed_layer(temp_db, "Sumari_AAS_v1", "main", "Sumari Bala", "AAS")
+    _seed_layer(temp_db, "Chora_AAS_v1", "supermod", "SPM | Chora", "AAS")
+    assert cl.build_map_token_map("main") == {
+        "foolsroad": "Fool's Road", "sumari": "Sumari Bala"}
+
+
+def test_map_token_map_drops_a_token_that_names_two_maps(temp_db):
+    _seed_layer(temp_db, "SPM_Chora_AAS_v1", "supermod", "SPM | Chora", "AAS")
+    _seed_layer(temp_db, "SPM_Narva_AAS_v1", "supermod", "SPM | Narva", "AAS")
+    assert cl.build_map_token_map("supermod") == {}
+
+
+def test_a_mod_layer_is_placed_on_its_stock_map():
+    assert cl.split_pack_name("SEC_26_Chora_AAS_v2", MAP_TOKENS) == {
+        "raw_name": "SEC_26_Chora_AAS_v2", "map_name": "Chora",
+        "gamemode_token": "AAS", "layer_version": "v2", "variant": "SEC 26"}
+
+
+def test_a_mod_layer_reads_an_uppercase_version():
+    layer = cl.split_pack_name("SEC_26_BlackCoast_RAAS_V1", MAP_TOKENS)
+    assert (layer["map_name"], layer["gamemode_token"], layer["layer_version"]) == (
+        "Black Coast", "RAAS", "v1")
+
+
+def test_every_leftover_token_joins_the_variant():
+    # Two layers differing only in "Winter"/"Summer" must never render alike.
+    layer = cl.split_pack_name("Mod_Narva_Winter_AAS_v1", MAP_TOKENS)
+    assert layer["variant"] == "Mod Winter"
+    assert layer["gamemode_token"] == "AAS"
+
+
+def test_a_name_without_a_mode_has_an_empty_gamemode_token():
+    assert cl.split_pack_name("Rivals_W1_FoolsRoad", MAP_TOKENS)["gamemode_token"] == ""
+    assert cl.split_pack_name("SEC_26_Chora_v1", MAP_TOKENS)["gamemode_token"] == ""
+
+
+def test_a_leading_stock_map_token_is_not_a_mod_layer():
+    # Shaped like a main-game layer: stays a classic custom map, where the
+    # name-collision guard deals with it.
+    assert cl.split_pack_name("Chora_AAS_v1", MAP_TOKENS) is None
+    assert cl.split_pack_name("Belaya_TC_v1", MAP_TOKENS) is None
+
+
+def test_a_whole_sec_pack_parses_onto_twelve_maps():
+    name, layers = cl.parse_custom_layers(SEC_26, MAP_TOKENS)
+    assert name == "SEC 26"
+    assert cl.is_pack(layers)
+    assert len(layers) == 16
+    assert len({layer["map_name"] for layer in layers}) == 12
+    assert {layer["variant"] for layer in layers} == {"SEC 26"}
+
+
+def test_a_pack_may_mix_variants():
+    name, layers = cl.parse_custom_layers(
+        "SEC_26_Chora_AAS_v2\nSEC_36_Chora_AAS_v1", MAP_TOKENS)
+    assert name == "SEC 26"
+    assert [layer["variant"] for layer in layers] == ["SEC 26", "SEC 36"]
+
+
+def test_a_pack_layer_without_a_mode_is_refused():
+    with pytest.raises(cl.CustomLayerError) as exc:
+        cl.parse_custom_layers("Rivals_W1_FoolsRoad\nOSI_W1_Chora", MAP_TOKENS)
+    assert exc.value.key == "custom_map.err_pack_no_mode"
+    assert "Rivals_W1_FoolsRoad" in exc.value.params["lines"]
+    assert "OSI_W1_Chora" in exc.value.params["lines"]
+
+
+def test_pack_and_classic_lines_are_not_mixed():
+    with pytest.raises(cl.CustomLayerError) as exc:
+        cl.parse_custom_layers("SEC_26_Chora_AAS_v2\nBelaya_TC_v1", MAP_TOKENS)
+    assert exc.value.key == "custom_map.err_mixed_kinds"
+    assert exc.value.params["lines"] == "Belaya_TC_v1"
+
+
+def test_a_vanilla_name_inside_a_pack_is_named_in_the_refusal():
+    with pytest.raises(cl.CustomLayerError) as exc:
+        cl.parse_custom_layers("SEC_26_Chora_AAS_v2\nChora_AAS_v1", MAP_TOKENS)
+    assert exc.value.key == "custom_map.err_mixed_kinds"
+    assert exc.value.params["lines"] == "Chora_AAS_v1"
+
+
+def test_a_classic_map_parses_the_same_with_map_tokens():
+    text = "Belaya_TC_v1\nBelaya_RAAS_v1"
+    assert cl.parse_custom_layers(text, MAP_TOKENS) == cl.parse_custom_layers(text)
+    assert not cl.is_pack(cl.parse_custom_layers(text, MAP_TOKENS)[1])

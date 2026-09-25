@@ -1060,6 +1060,19 @@ _STRINGS: dict[str, dict[str, str]] = {
         "de": "Alle Layer müssen zur selben Karte gehören. Gefunden: {maps}",
         "en": "All layers must belong to the same map. Found: {maps}",
     },
+    "custom_map.err_pack_no_mode": {
+        "de": "Diesen Layern auf bestehenden Karten fehlt der Spielmodus im "
+              "Namen: {lines}",
+        "en": "These layers on stock maps have no game mode in their name: "
+              "{lines}",
+    },
+    "custom_map.err_mixed_kinds": {
+        "de": "Diese Zeilen gehören zu keiner bestehenden Karte: {lines}. "
+              "Layer für bestehende Karten und eine eigene Map bitte getrennt "
+              "speichern.",
+        "en": "These lines don't belong to a stock map: {lines}. Save layers "
+              "for stock maps and a map of your own separately.",
+    },
     "custom_map.err_too_many": {
         "de": "Maximal {max} Layer pro Map ({count} eingegeben).",
         "en": "At most {max} layers per map ({count} given).",
