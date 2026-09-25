@@ -178,7 +178,7 @@ def test_details_view_carries_the_workshop_url_to_the_save(temp_db):
                                        ["USA"], ["CombinedArms"], workshop)
     asyncio.run(view._save(_StubInteraction(1)))
 
-    assert cl.workshop_url_for(1, "Belaya") == workshop
+    assert cl.workshop_url_for(1, "Belaya_TC_v1") == workshop
 
 
 def _seed_reference_cache(db):
@@ -355,7 +355,8 @@ def test_edit_that_never_touches_the_selects_keeps_the_factions(temp_db):
 def test_rename_moves_the_map_and_drops_the_old_rows(temp_db):
     _seed_reference_cache(temp_db)
     cl.save_custom_map(1, "Belaya", ["Belaya_TC_v1"], [], [])
-    assert temp_db.count_layers(temp_db.custom_source(1), "Belaya") == 1
+    src = temp_db.custom_source(1)
+    assert len(temp_db.get_modes_for_map("Belaya", allowed_sources=[src])) == 1
 
     view = botmod.CustomMapDetailsView(
         "en", 1, "Belaya Winter", LAYERS, ["USA"], ["CombinedArms"],
@@ -364,8 +365,8 @@ def test_rename_moves_the_map_and_drops_the_old_rows(temp_db):
     asyncio.run(view._save(interaction))
 
     assert [m["map_name"] for m in temp_db.get_custom_maps(1)] == ["Belaya Winter"]
-    assert temp_db.count_layers(temp_db.custom_source(1), "Belaya") == 0
-    assert temp_db.count_layers(temp_db.custom_source(1), "Belaya Winter") > 0
+    assert temp_db.get_modes_for_map("Belaya", allowed_sources=[src]) == []
+    assert temp_db.get_modes_for_map("Belaya Winter", allowed_sources=[src]) != []
     # The notice must say renamed, not saved — and t() swallows a bad
     # placeholder, so the rendered string is what gets pinned.
     body = interaction.response.edited["embed"].description

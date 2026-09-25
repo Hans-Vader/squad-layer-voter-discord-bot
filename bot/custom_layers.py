@@ -246,15 +246,19 @@ def normalize_workshop_url(value: Optional[str]) -> Optional[str]:
     return _WORKSHOP_URL_TEMPLATE.format(match.group(1))
 
 
-def workshop_url_for(guild_id: int, map_name: str) -> Optional[str]:
-    """The stored Workshop URL of one custom map, or None if it has none.
+def workshop_url_for(guild_id: int, raw_name: str) -> Optional[str]:
+    """The Workshop URL of the custom entry listing this raw name, or None.
 
-    Read at suggestion time, not at render time: the URL travels on the stored
-    suggestion so utils can render the icon without a database lookup.
+    By raw name, not map name: a pack's layers sit on stock maps ("Chora")
+    that are not the entry's name ("SEC 26"). Read at suggestion time, not at
+    render time: the URL travels on the stored suggestion so utils can render
+    the icon without a database lookup.
     """
+    wanted = (raw_name or "").lower()
     for entry in db.get_custom_maps(guild_id):
-        if entry["map_name"] == map_name:
-            return (entry.get("payload") or {}).get("workshop_url")
+        payload = entry.get("payload") or {}
+        if any(layer.lower() == wanted for layer in payload.get("layers") or []):
+            return payload.get("workshop_url")
     return None
 
 
@@ -380,6 +384,7 @@ def materialize_custom_layers(guild_id: Optional[int] = None,
     reference = db.get_faction_reference([source])
     all_units = db.get_unique_unit_types([source])
     token_map = build_gamemode_token_map(source)
+    map_tokens = build_map_token_map(source)
 
     written = 0
     for entry in entries:
@@ -388,11 +393,25 @@ def materialize_custom_layers(guild_id: Optional[int] = None,
                                          payload.get("units") or [],
                                          reference, all_units)
         for raw_name in payload.get("layers") or []:
-            _, token, version = split_raw_name(raw_name)
+            if payload.get("pack"):
+                layer = split_pack_name(raw_name, map_tokens)
+                if layer is None or not layer["gamemode_token"]:
+                    # The reference source no longer knows this stock map —
+                    # renamed upstream, or main failed to fetch and another
+                    # source stands in. A guessed map name would rebuild the
+                    # one-map-called-"SEC" mess packs exist to avoid.
+                    logger.warning("Custom pack %r: %s names no cached stock map — skipped",
+                                   entry["map_name"], raw_name)
+                    continue
+                map_name, token = layer["map_name"], layer["gamemode_token"]
+                version, variant = layer["layer_version"], layer["variant"]
+            else:
+                _, token, version = split_raw_name(raw_name)
+                map_name, variant = entry["map_name"], None
             db.upsert_layer(
                 raw_name=raw_name,
                 source=db.custom_source(entry["guild_id"]),
-                map_name=entry["map_name"],
+                map_name=map_name,
                 map_id="",
                 gamemode=token_map.get(token, token),
                 layer_version=version,
@@ -400,38 +419,78 @@ def materialize_custom_layers(guild_id: Optional[int] = None,
                 team1_alliances=[],
                 team2_alliances=[],
                 map_size_km=None,
+                variant=variant,
             )
             written += 1
     return written
 
 
+def _stored_entry(guild_id: int, map_name: str) -> Optional[dict]:
+    """One custom entry of the guild by its exact name, or None."""
+    return next((e for e in db.get_custom_maps(guild_id)
+                 if e["map_name"] == map_name), None)
+
+
+def _drop_cached_rows(guild_id: int, entry: Optional[dict]):
+    """Remove an entry's materialized rows — by raw name, never by map name:
+    a pack spans many stock maps, and two packs can share one."""
+    if entry:
+        db.delete_layers_by_raw_names(db.custom_source(guild_id),
+                                      (entry.get("payload") or {}).get("layers") or [])
+
+
 def save_custom_map(guild_id: int, map_name: str, raw_names: list[str],
                     faction_ids: list[str], unit_types: list[str],
-                    workshop_url: Optional[str] = None) -> int:
-    """Store one custom map and materialize it. Returns layers actually cached.
+                    workshop_url: Optional[str] = None,
+                    pack: bool = False) -> int:
+    """Store one custom entry and materialize it. Returns layers actually cached.
 
-    The cached rows are dropped first so a re-save that removes a layer doesn't
-    leave the old one behind — upsert alone would never delete it.
+    The entry's previous rows are dropped first so a re-save that removes a
+    layer doesn't leave the old one behind — upsert alone would never delete
+    it. `pack` marks mod layers on stock maps (see split_pack_name); it is
+    stored so a pack whose stock maps stop resolving is skipped instead of
+    being re-read as a map of its own.
     """
+    _drop_cached_rows(guild_id, _stored_entry(guild_id, map_name))
     db.upsert_custom_map(guild_id, map_name, {
         "layers": list(raw_names),
         "factions": list(faction_ids),
         "units": list(unit_types),
         "workshop_url": workshop_url,
+        "pack": pack,
     })
-    db.delete_layers(db.custom_source(guild_id), map_name)
-    # Narrowed to this one map — a save answers a Discord interaction and
+    # Narrowed to this one entry — a save answers a Discord interaction and
     # cannot afford to rewrite every map of the guild (see
-    # materialize_custom_layers). It also silently writes nothing when no
-    # reference source is cached, so report what actually reached the cache.
-    materialize_custom_layers(guild_id, map_name)
-    return db.count_layers(db.custom_source(guild_id), map_name)
+    # materialize_custom_layers). It writes nothing when no reference source
+    # is cached, so what it reports is what actually reached the cache.
+    return materialize_custom_layers(guild_id, map_name)
 
 
 def remove_custom_map(guild_id: int, map_name: str) -> bool:
-    """Delete a custom map and its materialized rows."""
-    db.delete_layers(db.custom_source(guild_id), map_name)
+    """Delete a custom entry and its materialized rows."""
+    _drop_cached_rows(guild_id, _stored_entry(guild_id, map_name))
     return db.delete_custom_map(guild_id, map_name)
+
+
+def claimed_layer(guild_id: int, raw_names: list[str],
+                  own_names: set) -> Optional[tuple[str, str]]:
+    """(layer, entry) for the first raw name another custom entry already lists.
+
+    layer_cache keys rows on (raw_name, source), so a raw name listed by two
+    entries would have the second save silently take over the first entry's
+    row — and deleting either entry would remove a layer the other still
+    lists. `own_names` are the entries this save replaces (the one being
+    edited, and the name it is saved under). Compared case-insensitively,
+    like split_layer_lines.
+    """
+    wanted = {name.lower(): name for name in raw_names}
+    for entry in db.get_custom_maps(guild_id):
+        if entry["map_name"] in own_names:
+            continue
+        for layer in (entry.get("payload") or {}).get("layers") or []:
+            if layer.lower() in wanted:
+                return wanted[layer.lower()], entry["map_name"]
+    return None
 
 
 def colliding_map_name(name: str) -> Optional[str]:

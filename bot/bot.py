@@ -680,16 +680,18 @@ def _units_source(source: str) -> str:
 
 
 def _custom_workshop_url(source: str, guild_id: int,
-                         map_name: str) -> Optional[str]:
-    """The Steam Workshop link of the custom map behind a layer, or None.
+                         raw_name: str) -> Optional[str]:
+    """The Steam Workshop link of the custom entry behind a layer, or None.
 
-    Only admin-defined maps can carry one, so a fetched source short-circuits
-    without touching the database. Read live wherever the layer is being
-    picked, and snapshotted onto the suggestion once it is submitted.
+    Only admin-defined layers can carry one, so a fetched source
+    short-circuits without touching the database. Keyed on the raw name: a
+    pack's layers sit on stock maps that are not the entry's name. Read live
+    wherever the layer is being picked, and snapshotted onto the suggestion
+    once it is submitted.
     """
     if not (source or "").startswith(CUSTOM_SOURCE_PREFIX):
         return None
-    return custom_layers.workshop_url_for(guild_id, map_name)
+    return custom_layers.workshop_url_for(guild_id, raw_name)
 
 
 def get_team_vehicles(layer_data: dict, faction: str, team: int,
@@ -1956,7 +1958,7 @@ async def _show_confirm(interaction: discord.Interaction, state: SuggestState, s
         "team1_unit_prefix": _resolve_unit_prefix(state.layer_data, state.team1_faction, 1),
         "team2_unit_prefix": _resolve_unit_prefix(state.layer_data, state.team2_faction, 2),
         "workshop_url": _custom_workshop_url(state.source, state.guild_id,
-                                             state.map_name),
+                                             state.mode_raw_name),
     }
 
     mirror_line = f"\n**Mirror Match:** {t('suggest.mirror_on', lang)}" if state.mirror_effective else ""
@@ -2078,7 +2080,7 @@ async def handle_suggest_submit(interaction: discord.Interaction, lang: str):
         # Snapshotted like the faction names above: the 🗺️ icon then links to
         # the mod's Workshop page, which SquadCalc cannot resolve.
         suggestion["workshop_url"] = _custom_workshop_url(
-            state.source, state.guild_id, state.map_name)
+            state.source, state.guild_id, state.mode_raw_name)
 
         # Check duplicate in current event
         for existing in event.get("suggestions", []):
@@ -6871,7 +6873,7 @@ async def _handle_history_add_submit(interaction: discord.Interaction,
 
     # Kept in sync with the suggest flow; history embeds render no icon today.
     layer["workshop_url"] = _custom_workshop_url(
-        state.source, state.guild_id, state.map_name)
+        state.source, state.guild_id, state.mode_raw_name)
 
     db.save_voting_history(state.guild_id, state.channel_id, [layer], layer)
 

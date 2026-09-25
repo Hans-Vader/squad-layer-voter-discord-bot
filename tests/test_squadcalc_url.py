@@ -115,8 +115,8 @@ def test_listed_suggestion_entry_carries_the_workshop_link(squadcalc):
 
 def test_custom_workshop_url_reads_the_stored_map(temp_db):
     cl.save_custom_map(1, "Belaya", ["Belaya_TC_v1"], [], [], WORKSHOP)
-    assert botmod._custom_workshop_url("custom:1", 1, "Belaya") == WORKSHOP
-    assert botmod._custom_workshop_url("custom:1", 1, "Kokan") is None
+    assert botmod._custom_workshop_url("custom:1", 1, "Belaya_TC_v1") == WORKSHOP
+    assert botmod._custom_workshop_url("custom:1", 1, "Kokan_TC_v1") is None
 
 
 def test_custom_workshop_url_skips_fetched_sources(temp_db, monkeypatch):
