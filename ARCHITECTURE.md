@@ -192,6 +192,32 @@ guild's custom rows into another's picker. `_resolve_event_sources` therefore
 has no special case for custom sources at all — the event's own
 `allowed_sources` governs them.
 
+An entry is either a map of its own or a **pack of mod layers on stock maps**
+(`payload.pack`). `custom_layers.split_pack_name` places a pack layer by
+finding, from the second token on, a token that leads the reference source's
+raw names (`build_map_token_map`: `FoolsRoad` → Fool's Road); every token
+that is neither map, mode nor version becomes the row's `variant`
+(`SEC_26_Chora_AAS_v2` → `SEC 26`). Pack rows carry the stock map's
+`map_name` and that `variant`; own maps have `variant` NULL. Rows are deleted
+by raw name, never by map name, because two packs can share a stock map, and
+a pack layer whose map token stops resolving is skipped at materialization
+rather than filed under a guessed name. The variant travels on the suggestion
+as `layer_variant`, is rendered by `utils.format_mode` wherever a layer is
+shown, and is one of `suggestion_matches`' keys — absent on legacy rows, so
+they keep matching.
+
+In the suggest and `/history_add` flows the custom source is **folded into
+the reference source** when an event allows both (`bot._overlay_target`):
+the source picker drops it, and the reference source's map, mode and layer
+steps read `SuggestState.source_filter = [reference, custom:<guild_id>]`.
+Own maps land in the map picker's Custom dropdown (`db.get_own_custom_maps`
+excludes pack rows, so stock maps keep their size bucket); mod layers follow
+the vanilla ones in their map's mode dropdown. Once a layer is picked,
+`_apply_mode_pick` sets `state.source` to the row's own source, so a mod
+layer's suggestion carries `custom:<guild_id>` — no SquadCalc link, the
+pack's Workshop link, the reference source's vehicle data. Without the
+reference source in the event, custom stays a standalone source.
+
 The guild defaults do **not** cap a running event. They seed the creation
 wizard through `_resolve_offered_sources` and stop there, which puts layer
 sources on the same footing as every other value in `EVENT_CONFIG_KEYS`.

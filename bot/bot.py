@@ -1184,7 +1184,8 @@ class SuggestState:
     __slots__ = ("guild_id", "channel_id", "db_id", "source", "map_name",
                  "mode_raw_name", "gamemode", "layer_version",
                  "team1_faction", "team1_unit", "team2_faction", "team2_unit",
-                 "layer_data", "flow", "mirror_match", "mirror_effective")
+                 "layer_data", "flow", "mirror_match", "mirror_effective",
+                 "allowed_sources", "source_filter")
 
     def __init__(self, guild_id: int, channel_id: int, flow: str = "suggest",
                  db_id: int = 0):
@@ -1197,6 +1198,12 @@ class SuggestState:
         # Empty string acts as "no source filter" — used for legacy events that
         # predate per-source caching.
         self.source = ""
+        # Every source the event allows, and the ones the picker steps for the
+        # chosen source read from — the chosen one, plus the guild's custom
+        # source when it is folded in (see _overlay_target). An empty filter
+        # means no source filter, like an empty `source` always has.
+        self.allowed_sources: list[str] = []
+        self.source_filter: list[str] = []
         self.map_name = None
         self.mode_raw_name = None
         self.gamemode = None
@@ -1278,6 +1285,59 @@ def _resolve_event_sources(event: dict, guild_id: int) -> list[str]:
     return db.get_guild_sources(guild_id)
 
 
+def _overlay_target(sources: list[str], guild_id: int) -> Optional[str]:
+    """The source the guild's custom source is folded into, or None.
+
+    With both the reference source (main) and the custom source allowed,
+    custom is no picker entry of its own: mod layers sit under their stock
+    map, and the guild's own maps join the reference source's map picker in
+    its Custom dropdown. Without the reference source, custom stays a source
+    like any other.
+    """
+    ref = custom_layers.resolve_reference_source()
+    if ref and ref in sources and db.custom_source(guild_id) in sources:
+        return ref
+    return None
+
+
+def _picker_sources(sources: list[str], guild_id: int) -> list[str]:
+    """What the source picker offers: the allowed sources, minus a folded-in custom one."""
+    if _overlay_target(sources, guild_id):
+        custom = db.custom_source(guild_id)
+        return [s for s in sources if s != custom]
+    return list(sources)
+
+
+def _choose_source(state: "SuggestState", source: str) -> None:
+    """Record the picked source and the sources its picker steps read from."""
+    state.source = source
+    state.source_filter = [source]
+    if source == _overlay_target(state.allowed_sources, state.guild_id):
+        state.source_filter.append(db.custom_source(state.guild_id))
+
+
+def _apply_mode_pick(state: "SuggestState", raw_name: str) -> Optional[dict]:
+    """Load the picked layer into the flow state; None if it is gone.
+
+    Pinned to the picked map: with custom folded in, the same raw name can
+    exist on another map in another source. The flow then carries the row's
+    own source — custom:<guild> for a mod layer found under main — which
+    keeps SquadCalc off it and lets the Workshop link and the borrowed
+    vehicle data resolve. Nothing after this step returns to the map step,
+    so the overwritten source is never read as the picked one.
+    """
+    layer = db.get_layer_by_raw_name(raw_name, allowed_sources=state.source_filter,
+                                     map_name=state.map_name)
+    if layer is None:
+        return None
+    state.mode_raw_name = raw_name
+    state.gamemode = layer["gamemode"]
+    state.layer_version = layer["layer_version"]
+    state.layer_data = layer
+    state.source = layer["source"]
+    return layer
+
+
 async def handle_suggest_start(interaction: discord.Interaction, db_id: int):
     """Start the suggestion flow when user clicks the Suggest button on a
     specific event's embed. The button carries db_id so the right event is
@@ -1328,10 +1388,12 @@ async def handle_suggest_start(interaction: discord.Interaction, db_id: int):
     _suggest_sessions[interaction.user.id] = state
 
     sources = _resolve_event_sources(event, interaction.guild_id)
-    if len(sources) > 1:
+    state.allowed_sources = sources
+    offered = _picker_sources(sources, interaction.guild_id)
+    if len(offered) > 1:
         # Show source picker first; the map step runs after the user picks one.
         options = [discord.SelectOption(label=source_label(s, lang)[:100], value=s)
-                   for s in sources[:25]]
+                   for s in offered[:25]]
         view = _bind(SourceSelectView(options, lang), interaction)
         embed = discord.Embed(
             title=t("suggest.phase_title", lang),
@@ -1341,14 +1403,14 @@ async def handle_suggest_start(interaction: discord.Interaction, db_id: int):
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
         return
 
-    if not sources:
-        # Nothing this guild may draw from. Falling through would set
-        # state.source = "", which downstream means *no source filter at all*.
+    if not offered:
+        # Nothing this guild may draw from. Falling through would leave an
+        # empty source filter, which downstream means *no filter at all*.
         await interaction.response.send_message(t("cache.empty", lang), ephemeral=True)
         return
 
     # Single source: skip the picker.
-    state.source = sources[0]
+    _choose_source(state, offered[0])
     await _suggest_show_map_step(interaction, state, settings, lang, edit=False)
 
 
@@ -1430,7 +1492,7 @@ async def _suggest_show_map_step(interaction: discord.Interaction, state: Sugges
     """Render the map-select dropdown. Used after source pick or when only one source exists."""
     event_settings = _state_event_settings(state) if state.db_id else (settings or {})
     blacklisted_maps = event_settings.get("blacklisted_maps", [])
-    source_filter = [state.source] if state.source else None
+    source_filter = state.source_filter
     maps = db.get_unique_maps(excluded_maps=blacklisted_maps, allowed_sources=source_filter)
 
     if not maps:
@@ -1446,9 +1508,9 @@ async def _suggest_show_map_step(interaction: discord.Interaction, state: Sugges
 
     sizes = db.get_map_sizes(allowed_sources=source_filter)
     # Which of these are the guild's own maps, so they get their own dropdown
-    # rather than being filed under a size they do not have.
-    custom_maps = set(db.get_unique_maps(
-        allowed_sources=[db.custom_source(state.guild_id)]))
+    # rather than being filed under a size they do not have. Only its own: a
+    # stock map carrying a pack's layers keeps its size bucket.
+    custom_maps = set(db.get_own_custom_maps(state.guild_id))
     view = _bind(_build_map_picker_view(maps, lang, sizes, custom_maps), interaction)
     desc = t("suggest.select_map", lang)
     if state.source:
@@ -1483,7 +1545,7 @@ class SourceSelect(ui.Select):
             return
 
         self.view.stop()  # retire this step so its timer can't clobber later steps
-        state.source = self.values[0]
+        _choose_source(state, self.values[0])
         settings = db.get_guild_settings(state.guild_id)
         lang = settings.get("language", "en") if settings else "en"
         await _suggest_show_map_step(interaction, state, settings or {}, lang, edit=True)
@@ -1560,7 +1622,7 @@ class MapSelect(ui.Select):
         settings = db.get_guild_settings(state.guild_id)
         lang = settings.get("language", "en") if settings else "en"
         event_settings = _state_event_settings(state) if state.db_id else (settings or {})
-        source_filter = [state.source] if state.source else None
+        source_filter = state.source_filter
 
         # Get available modes for this map (within the chosen source, if any)
         modes = db.get_modes_for_map(
@@ -1613,9 +1675,7 @@ class ModeSelect(ui.Select):
             return
 
         self.view.stop()  # retire this step so its timer can't clobber later steps
-        raw_name = self.values[0]
-        source_filter = [state.source] if state.source else None
-        layer_data = db.get_layer_by_raw_name(raw_name, allowed_sources=source_filter)
+        layer_data = _apply_mode_pick(state, self.values[0])
         if not layer_data:
             await interaction.response.edit_message(
                 embed=discord.Embed(description="Layer not found.", color=discord.Color.red()),
@@ -1623,10 +1683,6 @@ class ModeSelect(ui.Select):
             )
             return
 
-        state.mode_raw_name = raw_name
-        state.gamemode = layer_data["gamemode"]
-        state.layer_version = layer_data["layer_version"]
-        state.layer_data = layer_data
         # Mirror Match only applies to symmetric layers; on asymmetric modes the
         # normal independent flow runs (with a notice at the team 1 step).
         state.mirror_effective = state.mirror_match and _is_mirror_compatible(layer_data)
@@ -6968,9 +7024,11 @@ async def cmd_history_add(interaction: discord.Interaction):
     # Source picker first, mirroring the suggest flow. There's no event to
     # resolve sources from, so the candidates are everything this guild has.
     sources = _resolve_event_sources({}, interaction.guild_id)
-    if len(sources) > 1:
+    state.allowed_sources = sources
+    offered = _picker_sources(sources, interaction.guild_id)
+    if len(offered) > 1:
         options = [discord.SelectOption(label=source_label(s, lang)[:100], value=s)
-                   for s in sources[:25]]
+                   for s in offered[:25]]
         view = _bind(SourceSelectView(options, lang), interaction)
         embed = discord.Embed(
             title=t("history.add_title", lang),
@@ -6980,7 +7038,7 @@ async def cmd_history_add(interaction: discord.Interaction):
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
         return
 
-    if not sources:
+    if not offered:
         # Same guard as the suggest flow: an empty list downstream would mean
         # no source filter, exposing every guild's custom rows.
         await interaction.response.send_message(t("cache.empty", lang), ephemeral=True)
@@ -6988,7 +7046,7 @@ async def cmd_history_add(interaction: discord.Interaction):
 
     # Single source: skip the picker. The map step renders the size-bucketed
     # picker via _build_map_picker_view and surfaces its own "no maps" error.
-    state.source = sources[0]
+    _choose_source(state, offered[0])
     await _suggest_show_map_step(interaction, state, settings, lang, edit=False)
 
 

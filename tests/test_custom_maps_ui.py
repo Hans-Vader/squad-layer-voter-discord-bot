@@ -603,3 +603,21 @@ def test_panel_counts_the_maps_a_pack_spans(temp_db):
     assert f"**Belaya** — {t('custom_map.layer_count', 'en', count=1)}" in body
     view = interaction.response.edited["view"]
     assert {o.value: o.description for o in view.edit_select.options}["SEC 26"] == pack_text
+
+
+def test_map_step_keeps_stock_maps_out_of_the_custom_dropdown(temp_db):
+    _seed_stock_maps(temp_db)
+    cl.save_custom_map(1, "SEC 26", ["SEC_26_Chora_AAS_v2"], [], [], pack=True)
+    cl.save_custom_map(1, "Belaya", ["Belaya_TC_v1"], [], [])
+    state = botmod.SuggestState(1, 10)
+    state.allowed_sources = ["main", "custom:1"]
+    botmod._choose_source(state, "main")
+    interaction = _StubInteraction(1)
+
+    asyncio.run(botmod._suggest_show_map_step(interaction, state, {}, "en", edit=False))
+
+    selects = _selects(interaction.response.sent["view"])
+    custom = next(s for s in selects if t("source.custom", "en") in s.placeholder)
+    assert [o.value for o in custom.options] == ["Belaya"]
+    offered = sorted(o.value for s in selects for o in s.options)
+    assert offered == ["Al Basrah", "Belaya", "Chora", "Narva"]

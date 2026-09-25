@@ -916,3 +916,90 @@ def test_a_packs_workshop_link_is_found_by_raw_name(temp_db):
     cl.save_custom_map(1, "SEC 26", ["SEC_26_Chora_AAS_v2"], [], [], WORKSHOP, pack=True)
     assert cl.workshop_url_for(1, "SEC_26_Chora_AAS_v2") == WORKSHOP
     assert cl.workshop_url_for(1, "Chora") is None
+
+
+# ── Mod layers on stock maps: the custom source folds into main ─────────────
+
+def _overlay_guild(db):
+    """main with Chora and Narva, a SEC 26 pack on Chora, and an own map Belaya."""
+    _seed_stock_maps(db)
+    cl.save_custom_map(1, "SEC 26", ["SEC_26_Chora_AAS_v2"], [], [], pack=True)
+    cl.save_custom_map(1, "Belaya", ["Belaya_TC_v1"], [], [])
+
+
+def _state(allowed, source):
+    import bot as botmod
+    state = botmod.SuggestState(1, 10)
+    state.allowed_sources = allowed
+    botmod._choose_source(state, source)
+    return state
+
+
+def test_custom_is_folded_into_the_reference_source(temp_db):
+    import bot as botmod
+    _overlay_guild(temp_db)
+    assert botmod._picker_sources(["main", "custom:1"], 1) == ["main"]
+    assert _state(["main", "custom:1"], "main").source_filter == ["main", "custom:1"]
+
+
+def test_folding_needs_both_sources(temp_db):
+    import bot as botmod
+    _overlay_guild(temp_db)
+    _seed_layer(temp_db, "SPM_Chora_AAS_v1", "supermod", "SPM | Chora", "AAS")
+    assert botmod._picker_sources(["main"], 1) == ["main"]
+    assert botmod._picker_sources(["custom:1"], 1) == ["custom:1"]
+    assert botmod._picker_sources(["main", "supermod", "custom:1"], 1) == ["main", "supermod"]
+    assert _state(["main"], "main").source_filter == ["main"]
+    assert _state(["custom:1"], "custom:1").source_filter == ["custom:1"]
+    assert _state(["main", "supermod", "custom:1"], "supermod").source_filter == ["supermod"]
+
+
+def test_a_stock_map_lists_vanilla_then_its_mod_layers(temp_db):
+    _overlay_guild(temp_db)
+    state = _state(["main", "custom:1"], "main")
+    modes = temp_db.get_modes_for_map("Chora", allowed_sources=state.source_filter)
+    assert [m["display"] for m in modes] == ["AAS v1", "SEC 26 · AAS v2"]
+    assert "Belaya" in temp_db.get_unique_maps(allowed_sources=state.source_filter)
+
+
+def test_a_mod_layer_pick_carries_its_own_source(temp_db):
+    import bot as botmod
+    _overlay_guild(temp_db)
+    state = _state(["main", "custom:1"], "main")
+    state.map_name = "Chora"
+
+    layer = botmod._apply_mode_pick(state, "SEC_26_Chora_AAS_v2")
+
+    assert layer["variant"] == "SEC 26"
+    assert state.source == "custom:1"
+    assert (state.mode_raw_name, state.gamemode, state.layer_version) == (
+        "SEC_26_Chora_AAS_v2", "AAS", "v2")
+
+
+def test_a_mode_pick_is_pinned_to_the_picked_map(temp_db):
+    # A vanilla raw name registered under a map of its own exists twice once
+    # custom is folded into main; the pick must resolve on the picked map.
+    import bot as botmod
+    _seed_stock_maps(temp_db)
+    cl.save_custom_map(1, "MyChora", ["Chora_AAS_v1"], [], [])
+    state = _state(["main", "custom:1"], "main")
+
+    state.map_name = "MyChora"
+    assert botmod._apply_mode_pick(state, "Chora_AAS_v1")["source"] == "custom:1"
+    state.map_name = "Chora"
+    assert botmod._apply_mode_pick(state, "Chora_AAS_v1")["source"] == "main"
+
+
+def test_an_event_without_main_still_reaches_the_mod_layers(temp_db):
+    _overlay_guild(temp_db)
+    state = _state(["custom:1"], "custom:1")
+    assert temp_db.get_unique_maps(allowed_sources=state.source_filter) == ["Belaya", "Chora"]
+    modes = temp_db.get_modes_for_map("Chora", allowed_sources=state.source_filter)
+    assert [m["raw_name"] for m in modes] == ["SEC_26_Chora_AAS_v2"]
+    assert temp_db.get_own_custom_maps(1) == ["Belaya"]
+
+
+def test_blacklisting_a_stock_map_hides_its_mod_layers(temp_db):
+    _overlay_guild(temp_db)
+    assert "Chora" not in temp_db.get_unique_maps(
+        excluded_maps=["Chora"], allowed_sources=["main", "custom:1"])
