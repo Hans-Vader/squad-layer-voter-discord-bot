@@ -110,6 +110,16 @@ def _migrate_layer_cache_for_source(conn: sqlite3.Connection):
         conn.execute("DROP TABLE layer_cache")
 
 
+def _migrate_layer_cache_variant(conn: sqlite3.Connection):
+    """Add `variant` to a layer_cache created before mod layers.
+
+    Cache data only, and ADD COLUMN keeps the rows, so no rebuild is needed.
+    """
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(layer_cache)")]
+    if cols and "variant" not in cols:
+        conn.execute("ALTER TABLE layer_cache ADD COLUMN variant TEXT")
+
+
 def init_db():
     """Create tables if they don't exist."""
     conn = _get_conn()
@@ -130,6 +140,9 @@ def init_db():
             map_id                  TEXT    NOT NULL,
             gamemode                TEXT    NOT NULL,
             layer_version           TEXT,
+            -- Mod layers on a stock map: the raw-name tokens that are neither
+            -- map, mode nor version ("SEC 26"). NULL for everything else.
+            variant                 TEXT,
             map_size_km             REAL,
             factions_json           TEXT    NOT NULL DEFAULT '[]',
             team1_allowed_alliances TEXT    NOT NULL DEFAULT '[]',
@@ -193,6 +206,7 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_history_guild
             ON voting_history(guild_id, channel_id, completed_at);
     """)
+    _migrate_layer_cache_variant(conn)
     conn.commit()
     conn.close()
     logger.info(f"Database initialised: {DB_FILE}")
@@ -311,7 +325,8 @@ def custom_source(guild_id: int) -> str:
 def upsert_layer(raw_name: str, source: str, map_name: str, map_id: str, gamemode: str,
                  layer_version: Optional[str], factions: list,
                  team1_alliances: list, team2_alliances: list,
-                 map_size_km: Optional[float] = None):
+                 map_size_km: Optional[float] = None,
+                 variant: Optional[str] = None):
     """Insert or update a single layer in the cache.
 
     Layers are uniquely identified by (raw_name, source) — the same rawName
@@ -322,19 +337,20 @@ def upsert_layer(raw_name: str, source: str, map_name: str, map_id: str, gamemod
         conn.execute(
             """INSERT INTO layer_cache
                (raw_name, source, map_name, map_id, gamemode, layer_version,
-                map_size_km, factions_json, team1_allowed_alliances,
+                variant, map_size_km, factions_json, team1_allowed_alliances,
                 team2_allowed_alliances, cached_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
                ON CONFLICT(raw_name, source) DO UPDATE SET
                  map_name=excluded.map_name, map_id=excluded.map_id,
                  gamemode=excluded.gamemode, layer_version=excluded.layer_version,
+                 variant=excluded.variant,
                  map_size_km=excluded.map_size_km,
                  factions_json=excluded.factions_json,
                  team1_allowed_alliances=excluded.team1_allowed_alliances,
                  team2_allowed_alliances=excluded.team2_allowed_alliances,
                  cached_at=excluded.cached_at""",
             (raw_name, source, map_name, map_id, gamemode, layer_version,
-             map_size_km, json.dumps(factions),
+             variant, map_size_km, json.dumps(factions),
              json.dumps(team1_alliances), json.dumps(team2_alliances)),
         )
     conn.close()
@@ -370,50 +386,59 @@ def get_modes_for_map(map_name: str, allowed_gamemodes: list[str] = None,
                       allowed_sources: Optional[list[str]] = None) -> list[dict]:
     """Return available mode+version combos for a map.
 
-    Returns list of dicts with keys: gamemode, layer_version, raw_name, source, display.
-    `allowed_sources` filters layers to those whose source is in the list.
+    Returns list of dicts with keys: gamemode, layer_version, raw_name, source,
+    variant, display. `allowed_sources` filters layers to those whose source is
+    in the list. Vanilla rows come first, then each mod-layer variant, so a
+    stock map lists its own layers before the packs placed on it.
     """
     src_clause, src_params = _source_filter(allowed_sources)
     sql = (
-        f"SELECT gamemode, layer_version, raw_name, source FROM layer_cache "
-        f"WHERE map_name = ?{src_clause} ORDER BY gamemode, layer_version"
+        f"SELECT gamemode, layer_version, raw_name, source, variant FROM layer_cache "
+        f"WHERE map_name = ?{src_clause} "
+        f"ORDER BY variant IS NOT NULL, variant, gamemode, layer_version"
     )
     conn = _get_conn()
     rows = conn.execute(sql, [map_name, *src_params]).fetchall()
     conn.close()
 
     results = []
-    for gamemode, version, raw_name, source in rows:
+    for gamemode, version, raw_name, source, variant in rows:
         if allowed_gamemodes and gamemode not in allowed_gamemodes:
             continue
         display = gamemode
         if version:
             display = f"{gamemode} {version}"
+        if variant:
+            display = f"{variant} · {display}"
         results.append({
             "gamemode": gamemode,
             "layer_version": version,
             "raw_name": raw_name,
             "source": source,
+            "variant": variant,
             "display": display,
         })
     return results
 
 
 def get_layer_by_raw_name(raw_name: str,
-                          allowed_sources: Optional[list[str]] = None) -> Optional[dict]:
+                          allowed_sources: Optional[list[str]] = None,
+                          map_name: Optional[str] = None) -> Optional[dict]:
     """Return full layer data by raw_name.
 
     `allowed_sources` filters to layers whose source is in the list. When the
-    same raw_name exists in multiple matching sources, the first row found wins.
+    same raw_name exists in multiple matching sources, the first row found wins
+    — pass `map_name` to pin the lookup to the map the user actually picked.
     """
     src_clause, src_params = _source_filter(allowed_sources)
+    map_clause, map_params = (" AND map_name = ?", [map_name]) if map_name else ("", [])
     sql = (
         "SELECT raw_name, source, map_name, map_id, gamemode, layer_version, "
-        "factions_json, team1_allowed_alliances, team2_allowed_alliances "
-        f"FROM layer_cache WHERE raw_name = ?{src_clause} LIMIT 1"
+        "factions_json, team1_allowed_alliances, team2_allowed_alliances, variant "
+        f"FROM layer_cache WHERE raw_name = ?{src_clause}{map_clause} LIMIT 1"
     )
     conn = _get_conn()
-    row = conn.execute(sql, [raw_name, *src_params]).fetchone()
+    row = conn.execute(sql, [raw_name, *src_params, *map_params]).fetchone()
     conn.close()
     if row is None:
         return None
@@ -427,6 +452,7 @@ def get_layer_by_raw_name(raw_name: str,
         "factions": json.loads(row[6]),
         "team1_allowed_alliances": json.loads(row[7]),
         "team2_allowed_alliances": json.loads(row[8]),
+        "variant": row[9],
     }
 
 
@@ -492,6 +518,20 @@ def get_gamemode_samples(allowed_sources: Optional[list[str]] = None) -> list[tu
     return [(gm, rn) for gm, rn in rows if gm and rn]
 
 
+def get_map_raw_names(allowed_sources: Optional[list[str]] = None) -> list[tuple[str, str]]:
+    """(map_name, raw_name) for every cached layer.
+
+    Main-game raw names lead with their map's token ("FoolsRoad_AAS_v1" is
+    Fool's Road); custom_layers derives its stock-map table from these pairs.
+    """
+    where, params = _source_filter(allowed_sources, prefix=" WHERE ")
+    sql = f"SELECT map_name, raw_name FROM layer_cache{where} ORDER BY raw_name"
+    conn = _get_conn()
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+    return [(m, r) for m, r in rows]
+
+
 def get_faction_reference(allowed_sources: Optional[list[str]] = None) -> dict:
     """{factionId: {factionName, alliance, defaultUnit}} from cached layers.
 
@@ -534,6 +574,42 @@ def has_layers_for_source(source: str) -> bool:
     ).fetchone()
     conn.close()
     return row is not None
+
+
+def delete_layers_by_raw_names(source: str, raw_names: list[str]) -> int:
+    """Drop the cached rows of these raw names from one source.
+
+    Custom entries remove their rows this way rather than by map name: a
+    mod-layer pack spans many stock maps, and two packs can share one.
+    """
+    if not raw_names:
+        return 0
+    placeholders = ",".join("?" * len(raw_names))
+    conn = _get_conn()
+    with conn:
+        cur = conn.execute(
+            f"DELETE FROM layer_cache WHERE source = ? AND raw_name IN ({placeholders})",
+            [source, *raw_names],
+        )
+    count = cur.rowcount
+    conn.close()
+    return count
+
+
+def get_own_custom_maps(guild_id: int) -> list[str]:
+    """The guild's own custom maps — not the stock maps its mod layers sit on.
+
+    The map picker files these in the Custom dropdown; a stock map carrying a
+    pack's layers keeps its size bucket.
+    """
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT DISTINCT map_name FROM layer_cache "
+        "WHERE source = ? AND variant IS NULL ORDER BY map_name",
+        (custom_source(guild_id),),
+    ).fetchall()
+    conn.close()
+    return [r[0] for r in rows]
 
 
 def delete_layers(source: str, map_name: str) -> int:

@@ -8,13 +8,14 @@ import utils
 
 
 def _seed_layer(db, raw_name, source, map_name, gamemode, factions=None,
-                layer_version="v1"):
+                layer_version="v1", variant=None):
     """Put one layer row in the cache with the shape fetch_and_cache_layers writes."""
     db.upsert_layer(
         raw_name=raw_name, source=source, map_name=map_name, map_id=map_name.lower(),
         gamemode=gamemode, layer_version=layer_version,
         factions=factions if factions is not None else [],
         team1_alliances=[], team2_alliances=[], map_size_km=None,
+        variant=variant,
     )
 
 
@@ -617,3 +618,98 @@ def test_save_custom_map_stores_workshop_url(temp_db):
 def test_save_custom_map_without_workshop_url(temp_db):
     cl.save_custom_map(1, "Belaya", ["Belaya_TC_v1"], [], [])
     assert cl.workshop_url_for(1, "Belaya") is None
+
+
+# ── Mod layers on stock maps: the cache ─────────────────────────────────────
+
+def test_init_db_adds_the_variant_column_to_an_existing_cache(tmp_path, monkeypatch):
+    # A cache created before mod layers has no `variant` column; init_db adds
+    # it in place, keeping the rows.
+    import sqlite3
+    db_file = tmp_path / "old.db"
+    conn = sqlite3.connect(db_file)
+    conn.execute(
+        "CREATE TABLE layer_cache (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "raw_name TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'default', "
+        "map_name TEXT NOT NULL, map_id TEXT NOT NULL, gamemode TEXT NOT NULL, "
+        "layer_version TEXT, map_size_km REAL, "
+        "factions_json TEXT NOT NULL DEFAULT '[]', "
+        "team1_allowed_alliances TEXT NOT NULL DEFAULT '[]', "
+        "team2_allowed_alliances TEXT NOT NULL DEFAULT '[]', "
+        "cached_at TEXT NOT NULL DEFAULT (datetime('now')), "
+        "UNIQUE(raw_name, source))")
+    conn.execute("INSERT INTO layer_cache (raw_name, source, map_name, map_id, gamemode) "
+                 "VALUES ('Chora_AAS_v1', 'main', 'Chora', 'chora', 'AAS')")
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(database, "DB_FILE", str(db_file))
+
+    database.init_db()
+
+    layer = database.get_layer_by_raw_name("Chora_AAS_v1")
+    assert layer["map_name"] == "Chora"
+    assert layer["variant"] is None
+
+
+def test_layer_rows_carry_their_variant(temp_db):
+    _seed_layer(temp_db, "Chora_AAS_v1", "main", "Chora", "AAS")
+    _seed_layer(temp_db, "SEC_26_Chora_AAS_v2", "custom:1", "Chora", "AAS",
+                layer_version="v2", variant="SEC 26")
+    assert temp_db.get_layer_by_raw_name("Chora_AAS_v1")["variant"] is None
+    assert temp_db.get_layer_by_raw_name("SEC_26_Chora_AAS_v2")["variant"] == "SEC 26"
+
+
+def test_modes_list_vanilla_first_then_each_variant(temp_db):
+    _seed_layer(temp_db, "Chora_AAS_v2", "main", "Chora", "AAS", layer_version="v2")
+    _seed_layer(temp_db, "Chora_AAS_v1", "main", "Chora", "AAS")
+    _seed_layer(temp_db, "SEC_36_Chora_TC_v1", "custom:1", "Chora",
+                "TerritoryControl", variant="SEC 36")
+    _seed_layer(temp_db, "SEC_26_Chora_AAS_v1", "custom:1", "Chora", "AAS",
+                variant="SEC 26")
+
+    modes = temp_db.get_modes_for_map("Chora", allowed_sources=["main", "custom:1"])
+
+    assert [m["display"] for m in modes] == [
+        "AAS v1", "AAS v2", "SEC 26 · AAS v1", "SEC 36 · TerritoryControl v1"]
+    assert [m["variant"] for m in modes] == [None, None, "SEC 26", "SEC 36"]
+
+
+def test_a_layer_lookup_can_be_pinned_to_one_map(temp_db):
+    # The same raw name may sit in two sources on two different maps.
+    _seed_layer(temp_db, "Chora_AAS_v1", "main", "Chora", "AAS")
+    _seed_layer(temp_db, "Chora_AAS_v1", "custom:1", "MyChora", "AAS")
+    both = ["main", "custom:1"]
+    assert temp_db.get_layer_by_raw_name(
+        "Chora_AAS_v1", allowed_sources=both, map_name="MyChora")["source"] == "custom:1"
+    assert temp_db.get_layer_by_raw_name(
+        "Chora_AAS_v1", allowed_sources=both, map_name="Chora")["source"] == "main"
+
+
+def test_map_raw_names_pairs_every_row_of_a_source(temp_db):
+    _seed_layer(temp_db, "FoolsRoad_AAS_v1", "main", "Fool's Road", "AAS")
+    _seed_layer(temp_db, "Belaya_TC_v1", "custom:1", "Belaya", "TerritoryControl")
+    assert temp_db.get_map_raw_names(["main"]) == [("Fool's Road", "FoolsRoad_AAS_v1")]
+
+
+def test_own_custom_maps_leave_out_mod_layer_rows(temp_db):
+    _seed_layer(temp_db, "Belaya_TC_v1", "custom:1", "Belaya", "TerritoryControl")
+    _seed_layer(temp_db, "SEC_26_Chora_AAS_v2", "custom:1", "Chora", "AAS",
+                variant="SEC 26")
+    _seed_layer(temp_db, "Kokan_TC_v1", "custom:2", "Kokan", "TerritoryControl")
+    assert temp_db.get_own_custom_maps(1) == ["Belaya"]
+
+
+def test_delete_layers_by_raw_names_is_scoped_to_one_source(temp_db):
+    _seed_layer(temp_db, "SEC_26_Chora_AAS_v2", "custom:1", "Chora", "AAS",
+                variant="SEC 26")
+    _seed_layer(temp_db, "SEC_36_Chora_AAS_v1", "custom:1", "Chora", "AAS",
+                variant="SEC 36")
+    _seed_layer(temp_db, "SEC_26_Chora_AAS_v2", "custom:2", "Chora", "AAS",
+                variant="SEC 26")
+
+    assert temp_db.delete_layers_by_raw_names("custom:1", ["SEC_26_Chora_AAS_v2"]) == 1
+    assert temp_db.delete_layers_by_raw_names("custom:1", []) == 0
+
+    assert [m["raw_name"] for m in temp_db.get_modes_for_map(
+        "Chora", allowed_sources=["custom:1"])] == ["SEC_36_Chora_AAS_v1"]
+    assert temp_db.has_layers_for_source("custom:2") is True
