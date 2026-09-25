@@ -28,7 +28,7 @@ from i18n import t, phase_name
 from utils import (
     has_organizer_role, is_guild_admin,
     check_role_gate,
-    format_layer_short, format_layer_poll_option, suggestion_matches,
+    format_layer_short, format_layer_poll_option, format_mode, suggestion_matches,
     format_vehicle_list, build_ping_messages,
     build_event_embed, build_squadcalc_url, source_label, fit_lines_to_field,
     build_legend_lines,
@@ -1250,6 +1250,12 @@ def _state_event_settings(state: "SuggestState") -> dict:
     return _event_settings(record["event"] if record else {}, settings)
 
 
+def _state_mode_str(state: "SuggestState") -> str:
+    """Mode line of the flow's step headers, led by a mod layer's variant."""
+    return format_mode(state.gamemode, state.layer_version,
+                       (state.layer_data or {}).get("variant"))
+
+
 def _resolve_event_sources(event: dict, guild_id: int) -> list[str]:
     """Return the list of source names a user may pick from for this event.
 
@@ -1673,7 +1679,7 @@ async def _show_team1_faction_select(interaction: discord.Interaction,
     elif state.mirror_match and not state.mirror_effective:
         prefix = f"{t('suggest.mirror_mode_excluded', lang, mode=state.gamemode)}\n\n"
 
-    mode_str = f"{state.gamemode} {state.layer_version}".strip() if state.layer_version else state.gamemode
+    mode_str = _state_mode_str(state)
     view = _bind(Team1FactionSelectView(options, lang), interaction)
     embed = discord.Embed(
         title=t("suggest.phase_title", lang),
@@ -1747,7 +1753,7 @@ class Team1FactionSelect(ui.Select):
             "suggest.select_team1_unit_mirror" if state.mirror_effective
             else "suggest.select_team1_unit", lang)
         hint = f"{t('suggest.mirror_hint', lang)}\n\n" if state.mirror_effective else ""
-        mode_str = f"{state.gamemode} {state.layer_version}".strip() if state.layer_version else state.gamemode
+        mode_str = _state_mode_str(state)
         view = _bind(Team1UnitSelectView(options, lang, placeholder=unit_placeholder), interaction)
         embed = discord.Embed(
             title=t("suggest.phase_title", lang),
@@ -1816,7 +1822,7 @@ async def _show_team2_faction_select(interaction: discord.Interaction,
 
     options = _faction_select_options(factions)
 
-    mode_str = f"{state.gamemode} {state.layer_version}".strip() if state.layer_version else state.gamemode
+    mode_str = _state_mode_str(state)
     view = _bind(Team2FactionSelectView(options, lang), interaction)
     embed = discord.Embed(
         title=t("suggest.phase_title", lang),
@@ -1878,7 +1884,7 @@ class Team2FactionSelect(ui.Select):
             for u in units[:25]
         ]
 
-        mode_str = f"{state.gamemode} {state.layer_version}".strip() if state.layer_version else state.gamemode
+        mode_str = _state_mode_str(state)
         view = _bind(Team2UnitSelectView(options, lang), interaction)
         embed = discord.Embed(
             title=t("suggest.phase_title", lang),
@@ -1940,7 +1946,7 @@ def _layer_link_line(suggestion: dict, lang: str) -> str:
 async def _show_confirm(interaction: discord.Interaction, state: SuggestState, settings: dict):
     """Show the confirmation step with Submit/Cancel buttons."""
     lang = settings.get("language", "en") if settings else "en"
-    mode_str = f"{state.gamemode} {state.layer_version}".strip() if state.layer_version else state.gamemode
+    mode_str = _state_mode_str(state)
 
     # Preview-shaped suggestion for the layer link (mirrors the fields
     # build_squadcalc_url reads from a stored suggestion). The Workshop link is
@@ -1951,6 +1957,7 @@ async def _show_confirm(interaction: discord.Interaction, state: SuggestState, s
         "map_name": state.map_name,
         "gamemode": state.gamemode,
         "layer_version": state.layer_version,
+        "layer_variant": (state.layer_data or {}).get("variant"),
         "team1_faction": state.team1_faction,
         "team2_faction": state.team2_faction,
         "team1_unit": state.team1_unit,
@@ -2064,6 +2071,7 @@ async def handle_suggest_submit(interaction: discord.Interaction, lang: str):
             "map_name": state.map_name,
             "gamemode": state.gamemode,
             "layer_version": state.layer_version,
+            "layer_variant": (state.layer_data or {}).get("variant"),
             "team1_faction": state.team1_faction,
             "team1_faction_name": _resolve_faction_name(state.layer_data, state.team1_faction, 1),
             "team1_unit": state.team1_unit,
@@ -6906,6 +6914,7 @@ async def _handle_history_add_submit(interaction: discord.Interaction,
         "map_name": state.map_name,
         "gamemode": state.gamemode,
         "layer_version": state.layer_version,
+        "layer_variant": (state.layer_data or {}).get("variant"),
         "team1_faction": state.team1_faction,
         "team1_faction_name": _resolve_faction_name(state.layer_data, state.team1_faction, 1),
         "team1_unit": state.team1_unit,
